@@ -1,0 +1,64 @@
+{
+  "name": "@minoots/timer-system",
+  "version": "1.0.0",
+  "description": "Independent timer system for autonomous agents, developers, and enterprise workflows",
+  "main": "index.js",
+  "scripts": {
+    "start": "node independent-timer.js",
+    "test": "jest",
+    "build": "tsc",
+    "dev": "nodemon independent-timer.js",
+    "lint": "eslint .",
+    "docs": "typedoc",
+    "deploy": "firebase deploy"
+  },
+  "keywords": [
+    "timer",
+    "scheduler",
+    "autonomous",
+    "agents",
+    "workflow",
+    "background",
+    "independent",
+    "minoots"
+  ],
+  "author": "Paul Phillips <phillips.paul.email@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/domusgpt/minoots-timer-system.git"
+  },
+  "bugs": {
+    "url": "https://github.com/domusgpt/minoots-timer-system/issues"
+  },
+  "homepage": "https://github.com/domusgpt/minoots-timer-system#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.3.1",
+    "uuid": "^9.0.1",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2",
+    "eslint": "^8.55.0",
+    "typedoc": "^0.25.4",
+    "@types/jest": "^29.5.8"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverage": true,
+    "coverageDirectory": "coverage",
+    "coverageReporters": ["text", "lcov", "html"]
+  }
+}

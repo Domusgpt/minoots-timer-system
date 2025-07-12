@@ -1,0 +1,20 @@
+{
+  "id": "timer_1752356841335_e9ana2pk1",
+  "name": "firebase_domain_quick_retry",
+  "agentId": "cli_agent",
+  "duration": 600000,
+  "startTime": 1752356841335,
+  "endTime": 1752357441335,
+  "status": "running",
+  "events": {
+    "on_expire": {
+      "message": "Timer firebase_domain_quick_retry completed after 10m",
+      "file_write": {
+        "file": "timer_firebase_domain_quick_retry_complete.txt",
+        "content": "Independent timer firebase_domain_quick_retry completed at 2025-07-12T21:47:21.335Z"
+      }
+    }
+  },
+  "metadata": {},
+  "createdAt": "2025-07-12T21:47:21.335Z"
+}

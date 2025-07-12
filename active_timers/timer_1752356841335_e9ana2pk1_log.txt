@@ -1,0 +1,4 @@
+[2025-07-12T21:47:21.367Z] Background timer started: firebase_domain_quick_retry
+[2025-07-12T21:47:21.372Z] Duration: 600000ms
+[2025-07-12T21:47:21.377Z] Expected expiration: 2025-07-12T21:57:21.335Z
+[2025-07-12T21:47:21.383Z] Waiting 600 seconds for timer expiration...

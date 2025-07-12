@@ -1,0 +1,20 @@
+{
+  "id": "timer_1752356784362_w67vmi1tw",
+  "name": "firebase_domain_retry",
+  "agentId": "cli_agent",
+  "duration": 1800000,
+  "startTime": 1752356784362,
+  "endTime": 1752358584362,
+  "status": "running",
+  "events": {
+    "on_expire": {
+      "message": "Timer firebase_domain_retry completed after 30m",
+      "file_write": {
+        "file": "timer_firebase_domain_retry_complete.txt",
+        "content": "Independent timer firebase_domain_retry completed at 2025-07-12T21:46:24.362Z"
+      }
+    }
+  },
+  "metadata": {},
+  "createdAt": "2025-07-12T21:46:24.362Z"
+}

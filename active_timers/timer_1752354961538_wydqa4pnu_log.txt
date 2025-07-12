@@ -1,0 +1,11 @@
+[2025-07-12T21:16:01.573Z] Background timer started: short_test
+[2025-07-12T21:16:01.578Z] Duration: 10000ms
+[2025-07-12T21:16:01.584Z] Expected expiration: 2025-07-12T21:16:11.538Z
+[2025-07-12T21:16:01.590Z] Waiting 10 seconds for timer expiration...
+[2025-07-12T21:16:11.546Z] Timer expired: short_test
+[2025-07-12T21:16:11.551Z] Executing expiration events...
+[2025-07-12T21:16:11.557Z] Expiration message: Timer short_test completed after 10s
+[2025-07-12T21:16:11.566Z] Executing action: file_write
+[2025-07-12T21:16:11.573Z] File written: timer_short_test_complete.txt
+[2025-07-12T21:16:11.580Z] Timer process completed successfully
+[2025-07-12T21:16:11.589Z] Background script cleaned up
