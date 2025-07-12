@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Runtime
+*.pid
+*.pid.lock
+*.log
+logs/
+
+# Coverage
+coverage/
+.nyc_output
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist/
+build/
+lib/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+
+# MINOOTS specific
+active_timers/
+timer_*.txt
+transaction.yaml
+
+# Temporary files
+*.tmp
+.temp/
+
+# Testing
+test-results/
+playwright-report/
+
+# TypeScript
+*.tsbuildinfo
