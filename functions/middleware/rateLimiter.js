@@ -36,12 +36,15 @@ const tierLimits = {
 };
 
 /**
- * Create rate limiter for specific tier
+ * Pre-created rate limiters for each tier (FIXED: created at module load, not per request)
  */
-const createLimiter = (tier = 'free') => {
-  const config = tierLimits[tier] || tierLimits.free;
+const tierLimiters = {};
+
+// Create all rate limiters at module initialization
+Object.keys(tierLimits).forEach(tier => {
+  const config = tierLimits[tier];
   
-  return rateLimit({
+  tierLimiters[tier] = rateLimit({
     windowMs: config.windowMs,
     max: config.max,
     message: {
@@ -71,11 +74,11 @@ const createLimiter = (tier = 'free') => {
       });
     }
   });
-};
+});
 
 /**
  * Dynamic rate limiting middleware
- * Applies different limits based on user tier
+ * FIXED: Uses pre-created limiters instead of creating them per request
  */
 const dynamicRateLimiter = (req, res, next) => {
   // Skip rate limiting for health checks
@@ -86,8 +89,8 @@ const dynamicRateLimiter = (req, res, next) => {
   // Get user tier, default to free
   const userTier = req.user?.tier || 'free';
   
-  // Apply appropriate rate limiter
-  const limiter = createLimiter(userTier);
+  // Use pre-created limiter (FIXED: no longer creates limiter during request)
+  const limiter = tierLimiters[userTier] || tierLimiters.free;
   limiter(req, res, next);
 };
 
@@ -122,5 +125,5 @@ const expensiveOperationLimiter = rateLimit({
 module.exports = {
   dynamicRateLimiter,
   expensiveOperationLimiter,
-  createLimiter
+  tierLimiters // Export pre-created limiters for testing
 };

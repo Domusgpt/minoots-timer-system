@@ -54,10 +54,46 @@ This is CORRECT - all heavy initialization is in onInit().
 2. **Functions are already correctly implemented** - no code changes needed
 3. **Need to force deploy** to push existing correct code to production
 
-### **VERIFICATION AFTER DEPLOYMENT**
-After successful deployment, verify these fixes work:
+### **🚨 CRITICAL RATE LIMITER BUG DISCOVERED & FIXED**
 
-1. **MCP Authentication**: 
+**PROBLEM**: Functions were returning HTML 500 errors instead of JSON because:
+```
+ValidationError: express-rate-limit instance should be created at app initialization, not when responding to a request.
+```
+
+**ROOT CAUSE**: `dynamicRateLimiter` was creating new rate limiters during request handling (line 90: `const limiter = createLimiter(userTier)`) which violates express-rate-limit v6+ rules.
+
+**SOLUTION**: Pre-create all rate limiters at module initialization:
+```javascript
+// OLD (BROKEN): Created limiters per request
+const dynamicRateLimiter = (req, res, next) => {
+  const limiter = createLimiter(userTier); // VIOLATED LIBRARY RULES
+  limiter(req, res, next);
+};
+
+// NEW (FIXED): Pre-created limiters at module load
+const tierLimiters = {};
+Object.keys(tierLimits).forEach(tier => {
+  tierLimiters[tier] = rateLimit({...}); // Created once at startup
+});
+
+const dynamicRateLimiter = (req, res, next) => {
+  const limiter = tierLimiters[userTier] || tierLimiters.free; // Reuse existing
+  limiter(req, res, next);
+};
+```
+
+### **VERIFICATION AFTER RATE LIMITER FIX**
+After deployment, test timer creation works:
+
+1. **Basic Timer Creation**: 
+```bash
+curl -X POST https://api-m3waemr5lq-uc.a.run.app/timers \
+  -H "Content-Type: application/json" \
+  -d '{"duration": "5m", "name": "test_after_fix"}'
+```
+
+2. **MCP Authentication**: 
 ```bash
 curl -X POST https://api-m3waemr5lq-uc.a.run.app/timers \
   -H "x-api-key: mnt_test123" \
@@ -65,17 +101,9 @@ curl -X POST https://api-m3waemr5lq-uc.a.run.app/timers \
   -d '{"duration": "5m", "title": "Test"}'
 ```
 
-2. **Docs Endpoint**:
+3. **Docs Endpoint**:
 ```bash
 curl https://api-m3waemr5lq-uc.a.run.app/docs
-```
-
-3. **Organization Invite** (requires auth):
-```bash
-curl -X POST https://api-m3waemr5lq-uc.a.run.app/organizations/test/invite \
-  -H "Authorization: Bearer FIREBASE_JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"email": "test@example.com", "role": "editor"}'
 ```
 
 ### **FIREBASE v2 DEPLOYMENT BEST PRACTICES**
