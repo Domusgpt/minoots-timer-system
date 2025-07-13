@@ -1,24 +1,34 @@
 /**
  * MINOOTS Authentication Middleware
  * Handles both Firebase Auth tokens and API keys
+ * Enhanced with RBAC system for team collaboration
  * 
  * Free endpoints: /health, /pricing (no auth required)
  * All other endpoints require authentication
  */
 
 const admin = require('firebase-admin');
+// RBAC classes will be loaded lazily to avoid deployment timeout
 
 // Initialize Firestore reference (will be set in onInit)
 let db;
+let claimsManager;
 
 /**
  * Main authentication middleware
  * FREEMIUM STRATEGY: Allow anonymous usage with limits, then require auth
+ * RBAC INTEGRATION: Enhanced with role-based permissions
  */
 const authenticateUser = async (req, res, next) => {
   // Initialize db if not already done
   if (!db) {
     db = admin.firestore();
+  }
+  
+  // Initialize RBAC claims manager (lazy loading)
+  if (!claimsManager && global.rbacClaimsManager) {
+    const { RoleManager } = require('../rbac-system/core/RoleDefinitions');
+    claimsManager = global.rbacClaimsManager;
   }
 
   // Free endpoints that don't need auth
@@ -61,7 +71,7 @@ const authenticateUser = async (req, res, next) => {
         error: 'You\'ve reached the anonymous usage limit! Sign up for unlimited timers.',
         anonymousLimit: true,
         upgradeMessage: 'Create account for unlimited timers + MCP integration',
-        signupUrl: 'https://minoots.com/signup',
+        signupUrl: 'https://github.com/Domusgpt/minoots-timer-system#getting-started',
         docs: 'https://github.com/Domusgpt/minoots-timer-system#authentication'
       });
     }
@@ -69,7 +79,7 @@ const authenticateUser = async (req, res, next) => {
     const token = authHeader.split('Bearer ')[1];
     const decodedToken = await admin.auth().verifyIdToken(token);
     
-    // Get user data from Firestore
+    // Get user data from Firestore with RBAC enhancement
     const userDoc = await db.collection('users').doc(decodedToken.uid).get();
     
     if (!userDoc.exists) {
@@ -78,18 +88,57 @@ const authenticateUser = async (req, res, next) => {
         id: decodedToken.uid,
         email: decodedToken.email || '',
         tier: 'free',
+        role: 'user', // Default role
+        permissions: [],
+        organizations: [],
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         lastSeen: admin.firestore.FieldValue.serverTimestamp()
       };
       
       await db.collection('users').doc(decodedToken.uid).set(newUser);
       req.user = newUser;
+      
+      // Initialize RBAC claims for new user (if RBAC is available)
+      if (claimsManager) {
+        try {
+          await claimsManager.syncFromFirestore(decodedToken.uid);
+        } catch (error) {
+          console.warn('Failed to sync RBAC claims for new user:', error.message);
+        }
+      }
     } else {
       // Update last seen
       await userDoc.ref.update({
         lastSeen: admin.firestore.FieldValue.serverTimestamp()
       });
       req.user = { id: userDoc.id, ...userDoc.data() };
+    }
+    
+    // Add RBAC capabilities to request (only if RBAC is initialized)
+    if (claimsManager) {
+      const { RoleManager } = require('../rbac-system/core/RoleDefinitions');
+      req.rbac = {
+        claimsManager,
+        checkPermission: async (action, resourceType, resourceId = null) => {
+          return await claimsManager.validatePermission(
+            req.user.id, 
+            action, 
+            resourceType, 
+            resourceId
+          );
+        },
+        hasSystemPermission: (permission) => {
+          return RoleManager.hasSystemPermission(req.user.tier, permission);
+        },
+        canAccessOrganization: async (organizationId) => {
+          return await claimsManager.validatePermission(
+            req.user.id,
+            'read',
+            'organizations',
+            organizationId
+          );
+        }
+      };
     }
     
     req.authMethod = 'firebase';
@@ -201,11 +250,14 @@ async function checkApiKey(apiKey) {
       totalRequests: admin.firestore.FieldValue.increment(1)
     });
     
-    // Return user data associated with this API key
+    // Return user data associated with this API key with RBAC info
     return {
       id: data.userId,
       email: data.userEmail,
       tier: data.userTier || 'free',
+      role: data.userRole || 'user',
+      permissions: data.permissions || [],
+      organizations: data.organizations || [],
       apiKeyName: data.name
     };
   } catch (error) {
@@ -230,7 +282,88 @@ const requireTier = (requiredTier) => {
       res.status(403).json({
         success: false,
         error: `This feature requires ${requiredTier} tier or higher`,
-        upgradeUrl: 'https://minoots.com/pricing'
+        upgradeUrl: 'https://github.com/Domusgpt/minoots-timer-system#pricing'
+      });
+    }
+  };
+};
+
+/**
+ * RBAC Permission Check Middleware
+ * Use this to protect endpoints with specific permissions
+ */
+const requirePermission = (action, resourceType) => {
+  return async (req, res, next) => {
+    try {
+      // If RBAC not initialized, fall back to basic tier checking
+      if (!req.rbac) {
+        console.log('RBAC not initialized, using basic tier checking');
+        // For basic permissions, allow all authenticated users for now
+        return next();
+      }
+      
+      const permission = await req.rbac.checkPermission(action, resourceType);
+      
+      if (!permission.allowed) {
+        const upgradeUrl = permission.reason === 'tier_insufficient' 
+          ? 'https://github.com/Domusgpt/minoots-timer-system#pricing'
+          : null;
+          
+        return res.status(403).json({
+          success: false,
+          error: `Insufficient permissions: ${permission.reason}`,
+          required: { action, resourceType },
+          upgradeUrl
+        });
+      }
+      
+      // Add permission info to request for logging
+      req.permissionSource = permission.source;
+      next();
+    } catch (error) {
+      console.error('Permission check error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Permission check failed'
+      });
+    }
+  };
+};
+
+/**
+ * Organization Access Middleware
+ * Checks if user can access specific organization
+ */
+const requireOrganizationAccess = (orgIdParam = 'orgId') => {
+  return async (req, res, next) => {
+    try {
+      const organizationId = req.params[orgIdParam];
+      
+      if (!organizationId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Organization ID required'
+        });
+      }
+      
+      const hasAccess = await req.rbac.canAccessOrganization(organizationId);
+      
+      if (!hasAccess.allowed) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied to organization',
+          organizationId
+        });
+      }
+      
+      req.organizationId = organizationId;
+      req.organizationRole = hasAccess.role;
+      next();
+    } catch (error) {
+      console.error('Organization access check error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Organization access check failed'
       });
     }
   };
@@ -241,10 +374,20 @@ const requireTier = (requiredTier) => {
  */
 const setDb = (database) => {
   db = database;
+  // Initialize claims manager when db is set - lazy load to avoid deployment timeout
+  try {
+    const CustomClaimsManager = require('../rbac-system/core/CustomClaimsManager');
+    claimsManager = new CustomClaimsManager(db);
+  } catch (error) {
+    console.warn('Could not initialize CustomClaimsManager:', error.message);
+    claimsManager = null;
+  }
 };
 
 module.exports = {
   authenticateUser,
   requireTier,
+  requirePermission,
+  requireOrganizationAccess,
   setDb
 };

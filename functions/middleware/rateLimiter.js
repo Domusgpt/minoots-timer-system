@@ -67,7 +67,7 @@ const createLimiter = (tier = 'free') => {
         limit: config.max,
         windowMs: config.windowMs,
         retryAfter: Math.round(req.rateLimit.resetTime / 1000),
-        upgradeUrl: tier === 'free' ? 'https://minoots.com/pricing' : null
+        upgradeUrl: tier === 'free' ? 'https://github.com/Domusgpt/minoots-timer-system#pricing' : null
       });
     }
   });

@@ -7,7 +7,7 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
 // Import middleware and utilities
-const { authenticateUser, requireTier, setDb } = require('./middleware/auth');
+const { authenticateUser, requireTier, requirePermission, requireOrganizationAccess, setDb } = require('./middleware/auth');
 const { dynamicRateLimiter, expensiveOperationLimiter } = require('./middleware/rateLimiter');
 const { usageTrackingMiddleware, checkTimerLimit, checkConcurrentTimerLimit, trackTimerCreation } = require('./utils/usageTracking');
 const { createApiKey, getUserApiKeys, revokeApiKey, updateApiKeyName, getApiKeyStats } = require('./utils/apiKey');
@@ -15,11 +15,22 @@ const { createCheckoutSession, handleSubscriptionCreated, handleSubscriptionCanc
 
 let db;
 
-onInit(() => {
-  admin.initializeApp();
+onInit(async () => {
+  // Initialize Firebase Admin only if not already initialized
+  if (!admin.apps.length) {
+    admin.initializeApp();
+  }
+  
   db = admin.firestore();
   // Set db reference for auth middleware
   setDb(db);
+  
+  // Initialize RBAC system - defer heavy initialization
+  const CustomClaimsManager = require('./rbac-system/core/CustomClaimsManager');
+  global.rbacClaimsManager = new CustomClaimsManager(db);
+  global.rbacDb = db;
+  
+  console.log('MINOOTS RBAC system initialized successfully');
 });
 
 const app = express();
@@ -59,6 +70,8 @@ class RealTimer {
             status: 'running',
             events: config.events || {},
             metadata: config.metadata || {},
+            organizationId: config.organizationId,
+            projectId: config.projectId,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         };
@@ -109,6 +122,12 @@ class RealTimer {
         }
         if (filters.status) {
             query = query.where('status', '==', filters.status);
+        }
+        if (filters.organizationId) {
+            query = query.where('organizationId', '==', filters.organizationId);
+        }
+        if (filters.projectId) {
+            query = query.where('projectId', '==', filters.projectId);
         }
         
         const snapshot = await query.get();
@@ -183,8 +202,8 @@ class RealTimer {
 
 // API Routes
 
-// Timer creation with limits and tracking
-app.post('/timers', expensiveOperationLimiter, async (req, res) => {
+// Timer creation with limits, tracking, and RBAC
+app.post('/timers', expensiveOperationLimiter, requirePermission('create', 'timers'), async (req, res) => {
     try {
         // Check daily timer limit
         const dailyCheck = await checkTimerLimit(req.user.id, req.user.tier);
@@ -194,7 +213,7 @@ app.post('/timers', expensiveOperationLimiter, async (req, res) => {
                 error: `Daily timer limit reached (${dailyCheck.limit} timers per day)`,
                 used: dailyCheck.used,
                 limit: dailyCheck.limit,
-                upgradeUrl: req.user.tier === 'free' ? 'https://minoots.com/pricing' : null
+                upgradeUrl: req.user.tier === 'free' ? 'https://github.com/Domusgpt/minoots-timer-system#pricing' : null
             });
         }
 
@@ -206,18 +225,21 @@ app.post('/timers', expensiveOperationLimiter, async (req, res) => {
                 error: `Concurrent timer limit reached (${concurrentCheck.limit} active timers)`,
                 current: concurrentCheck.current,
                 limit: concurrentCheck.limit,
-                upgradeUrl: req.user.tier === 'free' ? 'https://minoots.com/pricing' : null
+                upgradeUrl: req.user.tier === 'free' ? 'https://github.com/Domusgpt/minoots-timer-system#pricing' : null
             });
         }
 
-        // Add user context to timer creation
+        // Add user context and RBAC info to timer creation
         const timerConfig = {
             ...req.body,
             agent_id: req.body.agent_id || req.user.id,
+            organizationId: req.body.organizationId,
+            projectId: req.body.projectId,
             metadata: {
                 ...req.body.metadata,
                 createdBy: req.user.id,
-                userTier: req.user.tier
+                userTier: req.user.tier,
+                permissionSource: req.permissionSource
             }
         };
 
@@ -248,17 +270,47 @@ app.post('/timers', expensiveOperationLimiter, async (req, res) => {
     }
 });
 
-app.get('/timers', async (req, res) => {
+app.get('/timers', requirePermission('read', 'timers'), async (req, res) => {
     try {
-        const timers = await RealTimer.list(req.query);
-        res.json({ success: true, timers, count: timers.length });
+        // Add user context to filter timers they can access
+        const filters = {
+            ...req.query,
+            // For now, users can see their own timers
+            // TODO: Add organization-level filtering for team tier
+            agent_id: req.query.agent_id || (req.user.tier === 'free' ? req.user.id : undefined)
+        };
+        
+        const timers = await RealTimer.list(filters);
+        
+        // Filter timers based on user's organization access
+        const accessibleTimers = timers.filter(timer => {
+            // User can always see their own timers
+            if (timer.metadata?.createdBy === req.user.id) return true;
+            
+            // For organization timers, check if user has access
+            if (timer.organizationId) {
+                const userOrgs = req.user.organizations || [];
+                return userOrgs.some(org => 
+                    (org.id || org.organizationId) === timer.organizationId
+                );
+            }
+            
+            return true;
+        });
+        
+        res.json({ 
+            success: true, 
+            timers: accessibleTimers, 
+            count: accessibleTimers.length,
+            filtered: timers.length - accessibleTimers.length
+        });
     } catch (error) {
         console.error('List timers error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-app.get('/timers/:id', async (req, res) => {
+app.get('/timers/:id', requirePermission('read', 'timers'), async (req, res) => {
     try {
         const timer = await RealTimer.get(req.params.id);
         if (!timer) {
@@ -271,7 +323,7 @@ app.get('/timers/:id', async (req, res) => {
     }
 });
 
-app.delete('/timers/:id', async (req, res) => {
+app.delete('/timers/:id', requirePermission('delete', 'timers'), async (req, res) => {
     try {
         await RealTimer.delete(req.params.id);
         res.json({ success: true });
@@ -298,7 +350,7 @@ app.post('/quick/wait', async (req, res) => {
     }
 });
 
-app.post('/teams/:team/broadcast', async (req, res) => {
+app.post('/teams/:team/broadcast', requirePermission('manage', 'teams'), async (req, res) => {
     try {
         const broadcast = {
             team: req.params.team,
@@ -322,7 +374,7 @@ app.post('/teams/:team/broadcast', async (req, res) => {
 });
 
 // API Key Management Endpoints
-app.post('/account/api-keys', async (req, res) => {
+app.post('/account/api-keys', requirePermission('manage', 'api_keys'), async (req, res) => {
     try {
         const keyName = req.body.name || 'Default Key';
         const apiKeyData = await createApiKey(req.user.id, req.user.email, req.user.tier, keyName);
@@ -338,7 +390,7 @@ app.post('/account/api-keys', async (req, res) => {
     }
 });
 
-app.get('/account/api-keys', async (req, res) => {
+app.get('/account/api-keys', requirePermission('read', 'api_keys'), async (req, res) => {
     try {
         const keys = await getUserApiKeys(req.user.id);
         res.json({ success: true, apiKeys: keys });
@@ -348,7 +400,7 @@ app.get('/account/api-keys', async (req, res) => {
     }
 });
 
-app.delete('/account/api-keys/:keyId', async (req, res) => {
+app.delete('/account/api-keys/:keyId', requirePermission('manage', 'api_keys'), async (req, res) => {
     try {
         await revokeApiKey(req.user.id, req.params.keyId);
         res.json({ success: true, message: 'API key revoked successfully' });
@@ -358,7 +410,7 @@ app.delete('/account/api-keys/:keyId', async (req, res) => {
     }
 });
 
-app.put('/account/api-keys/:keyId', async (req, res) => {
+app.put('/account/api-keys/:keyId', requirePermission('manage', 'api_keys'), async (req, res) => {
     try {
         await updateApiKeyName(req.user.id, req.params.keyId, req.body.name);
         res.json({ success: true, message: 'API key updated successfully' });
@@ -391,16 +443,44 @@ app.get('/account/usage', async (req, res) => {
 // MCP access endpoint (Pro tier only)
 app.get('/mcp/config', requireTier('pro'), async (req, res) => {
     try {
+        // Handle missing FUNCTIONS_SOURCE environment variable
+        const functionsSource = process.env.FUNCTIONS_SOURCE;
+        
+        if (!functionsSource) {
+            return res.json({
+                success: false,
+                error: 'MCP server configuration not available in this environment',
+                message: 'FUNCTIONS_SOURCE environment variable not set. This is required for MCP server configuration.',
+                alternative: {
+                    suggestion: 'Download and run the MCP server locally',
+                    repository: 'https://github.com/Domusgpt/minoots-timer-system',
+                    localCommand: 'node mcp/index.js',
+                    environment: {
+                        MINOOTS_API_KEY: 'your_api_key_here',
+                        MINOOTS_API_BASE: 'https://api-m3waemr5lq-uc.a.run.app'
+                    }
+                }
+            });
+        }
+        
         res.json({
             success: true,
             mcpServer: {
                 command: 'node',
-                args: [`${process.env.FUNCTIONS_SOURCE}/mcp/index.js`],
+                args: [`${functionsSource}/mcp/index.js`],
                 env: {
-                    MINOOTS_API_BASE: process.env.MINOOTS_API_BASE || 'https://api-m3waemr5lq-uc.a.run.app'
+                    MINOOTS_API_BASE: process.env.MINOOTS_API_BASE || 'https://api-m3waemr5lq-uc.a.run.app',
+                    MINOOTS_API_KEY: '<your_api_key_here>'
                 }
             },
-            message: 'Add this configuration to your Claude Desktop settings'
+            message: 'Add this configuration to your Claude Desktop settings',
+            setup: {
+                steps: [
+                    '1. Create an API key at /account/api-keys',
+                    '2. Replace <your_api_key_here> with your actual API key',
+                    '3. Add the configuration to Claude Desktop'
+                ]
+            }
         });
     } catch (error) {
         console.error('MCP config error:', error);
@@ -408,12 +488,440 @@ app.get('/mcp/config', requireTier('pro'), async (req, res) => {
     }
 });
 
+// Organization Management Endpoints (Team tier and above)
+app.post('/organizations', requireTier('team'), requirePermission('create', 'organizations'), async (req, res) => {
+    try {
+        const { FirestoreSchemaManager } = require('./rbac-system/core/FirestoreSchema');
+        const schemaManager = new FirestoreSchemaManager(db);
+        
+        const organizationData = {
+            name: req.body.name,
+            slug: req.body.slug,
+            settings: req.body.settings || {},
+            ...req.body
+        };
+        
+        const organization = await schemaManager.createOrganization(organizationData, req.user.id);
+        
+        // Sync user's Custom Claims to include new organization
+        await req.rbac.claimsManager.syncFromFirestore(req.user.id);
+        
+        res.status(201).json({
+            success: true,
+            organization,
+            message: 'Organization created successfully'
+        });
+    } catch (error) {
+        console.error('Create organization error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+app.get('/organizations', requirePermission('read', 'organizations'), async (req, res) => {
+    try {
+        // Get user's organizations from Custom Claims or Firestore
+        const userOrgs = req.user.organizations || [];
+        const organizations = [];
+        
+        for (const orgAccess of userOrgs) {
+            const orgDoc = await db.collection('organizations').doc(orgAccess.id || orgAccess.organizationId).get();
+            if (orgDoc.exists) {
+                organizations.push({
+                    id: orgDoc.id,
+                    role: orgAccess.role,
+                    ...orgDoc.data()
+                });
+            }
+        }
+        
+        res.json({
+            success: true,
+            organizations,
+            count: organizations.length
+        });
+    } catch (error) {
+        console.error('List organizations error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+app.get('/organizations/:orgId', requireOrganizationAccess('orgId'), async (req, res) => {
+    try {
+        const orgDoc = await db.collection('organizations').doc(req.organizationId).get();
+        
+        if (!orgDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Organization not found'
+            });
+        }
+        
+        res.json({
+            success: true,
+            organization: {
+                id: orgDoc.id,
+                userRole: req.organizationRole,
+                ...orgDoc.data()
+            }
+        });
+    } catch (error) {
+        console.error('Get organization error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+app.post('/organizations/:orgId/invite', requireOrganizationAccess('orgId'), async (req, res) => {
+    try {
+        // Check if user has admin role in this organization
+        const { RoleManager } = require('./rbac-system/core/RoleDefinitions');
+        const canInvite = RoleManager.isRoleHigher(req.organizationRole, 'editor');
+        
+        if (!canInvite) {
+            return res.status(403).json({
+                success: false,
+                error: 'Admin or Owner role required to invite users'
+            });
+        }
+        
+        const { FirestoreSchemaManager } = require('./rbac-system/core/FirestoreSchema');
+        const schemaManager = new FirestoreSchemaManager(db);
+        
+        const invitation = await schemaManager.inviteUserToOrganization(
+            req.organizationId,
+            req.body.email,
+            req.body.role || 'editor',
+            req.user.id
+        );
+        
+        res.status(201).json({
+            success: true,
+            invitation,
+            message: 'User invitation sent successfully'
+        });
+    } catch (error) {
+        console.error('Invite user error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+app.post('/organizations/:orgId/projects', requireOrganizationAccess('orgId'), async (req, res) => {
+    try {
+        // Check if user can create projects
+        const { RoleManager } = require('./rbac-system/core/RoleDefinitions');
+        const canCreateProject = RoleManager.hasPermission(req.organizationRole, 'create', 'projects');
+        
+        if (!canCreateProject) {
+            return res.status(403).json({
+                success: false,
+                error: 'Manager role or higher required to create projects'
+            });
+        }
+        
+        const { FirestoreSchemaManager } = require('./rbac-system/core/FirestoreSchema');
+        const schemaManager = new FirestoreSchemaManager(db);
+        
+        const projectData = {
+            name: req.body.name,
+            description: req.body.description,
+            settings: req.body.settings || {},
+            access: req.body.access || {},
+            ...req.body
+        };
+        
+        const project = await schemaManager.createProject(projectData, req.organizationId, req.user.id);
+        
+        res.status(201).json({
+            success: true,
+            project,
+            message: 'Project created successfully'
+        });
+    } catch (error) {
+        console.error('Create project error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+app.get('/organizations/:orgId/projects', requireOrganizationAccess('orgId'), async (req, res) => {
+    try {
+        const projectsQuery = await db.collection('projects')
+            .where('organizationId', '==', req.organizationId)
+            .get();
+        
+        const projects = projectsQuery.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        
+        res.json({
+            success: true,
+            projects,
+            count: projects.length
+        });
+    } catch (error) {
+        console.error('List projects error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Analytics endpoints (Team tier and above with view_analytics permission)
+app.get('/analytics/organization/:orgId', requireOrganizationAccess('orgId'), requirePermission('view_analytics', 'analytics'), async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        
+        // Get organization members
+        const orgDoc = await db.collection('organizations').doc(req.organizationId).get();
+        if (!orgDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Organization not found' });
+        }
+        
+        const orgData = orgDoc.data();
+        const memberIds = Object.keys(orgData.members || {});
+        
+        // Aggregate usage stats for all organization members
+        let totalTimers = 0;
+        let totalRequests = 0;
+        let memberStats = {};
+        
+        for (const memberId of memberIds) {
+            const { getUserUsageStats } = require('./utils/usageTracking');
+            const memberUsage = await getUserUsageStats(memberId, days);
+            
+            totalTimers += memberUsage.totalTimers;
+            totalRequests += memberUsage.totalRequests;
+            memberStats[memberId] = {
+                timers: memberUsage.totalTimers,
+                requests: memberUsage.totalRequests,
+                dailyStats: memberUsage.dailyStats
+            };
+        }
+        
+        // Get organization timer stats
+        const timersQuery = await db.collection('timers')
+            .where('organizationId', '==', req.organizationId)
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(startDate))
+            .get();
+        
+        const orgTimers = timersQuery.docs.map(doc => doc.data());
+        const timersByStatus = {
+            running: orgTimers.filter(t => t.status === 'running').length,
+            expired: orgTimers.filter(t => t.status === 'expired').length,
+            total: orgTimers.length
+        };
+        
+        // Calculate average timer duration
+        const avgDuration = orgTimers.length > 0 
+            ? Math.round(orgTimers.reduce((sum, t) => sum + t.duration, 0) / orgTimers.length)
+            : 0;
+        
+        res.json({
+            success: true,
+            organizationId: req.organizationId,
+            period: {
+                days: days,
+                startDate: startDate.toISOString(),
+                endDate: new Date().toISOString()
+            },
+            summary: {
+                totalMembers: memberIds.length,
+                totalTimers: totalTimers,
+                totalRequests: totalRequests,
+                organizationTimers: timersByStatus.total,
+                avgTimerDuration: avgDuration,
+                activeTimers: timersByStatus.running
+            },
+            timers: {
+                byStatus: timersByStatus,
+                averageDuration: `${Math.floor(avgDuration / 60000)}m ${Math.floor((avgDuration % 60000) / 1000)}s`
+            },
+            members: memberStats
+        });
+    } catch (error) {
+        console.error('Organization analytics error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/analytics/team/:teamName', requirePermission('view_analytics', 'analytics'), async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        
+        // Get team timers and broadcasts
+        const timersQuery = await db.collection('timers')
+            .where('team', '==', req.params.teamName)
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(startDate))
+            .get();
+        
+        const broadcastsQuery = await db.collection('team_broadcasts')
+            .where('team', '==', req.params.teamName)
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(startDate))
+            .get();
+        
+        const teamTimers = timersQuery.docs.map(doc => doc.data());
+        const teamBroadcasts = broadcastsQuery.docs.map(doc => doc.data());
+        
+        // Get unique agents in team
+        const uniqueAgents = [...new Set(teamTimers.map(t => t.agentId))];
+        
+        // Calculate team coordination metrics
+        const coordinationMetrics = {
+            totalTimers: teamTimers.length,
+            totalBroadcasts: teamBroadcasts.length,
+            uniqueAgents: uniqueAgents.length,
+            avgTimersPerAgent: uniqueAgents.length > 0 ? Math.round(teamTimers.length / uniqueAgents.length) : 0,
+            coordinationSessions: teamTimers.filter(t => t.metadata?.coordination_session).length
+        };
+        
+        // Daily breakdown
+        const dailyStats = {};
+        teamTimers.forEach(timer => {
+            const date = new Date(timer.createdAt?.toDate?.() || timer.createdAt).toISOString().split('T')[0];
+            if (!dailyStats[date]) {
+                dailyStats[date] = { timers: 0, agents: new Set() };
+            }
+            dailyStats[date].timers++;
+            dailyStats[date].agents.add(timer.agentId);
+        });
+        
+        // Convert Set to count for JSON serialization
+        Object.keys(dailyStats).forEach(date => {
+            dailyStats[date].uniqueAgents = dailyStats[date].agents.size;
+            delete dailyStats[date].agents;
+        });
+        
+        res.json({
+            success: true,
+            team: req.params.teamName,
+            period: {
+                days: days,
+                startDate: startDate.toISOString(),
+                endDate: new Date().toISOString()
+            },
+            coordination: coordinationMetrics,
+            dailyBreakdown: dailyStats,
+            recentBroadcasts: teamBroadcasts.slice(-5).map(b => ({
+                message: b.message,
+                timestamp: b.timestamp || b.createdAt?.toDate?.()?.getTime?.()
+            }))
+        });
+    } catch (error) {
+        console.error('Team analytics error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/analytics/personal', requirePermission('view_analytics', 'analytics'), async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const { getUserUsageStats } = require('./utils/usageTracking');
+        const { getApiKeyStats } = require('./utils/apiKey');
+        
+        const usage = await getUserUsageStats(req.user.id, days);
+        const apiKeyStats = await getApiKeyStats(req.user.id, days);
+        
+        // Get user's recent timers for trends
+        const timersQuery = await db.collection('timers')
+            .where('metadata.createdBy', '==', req.user.id)
+            .orderBy('createdAt', 'desc')
+            .limit(100)
+            .get();
+        
+        const userTimers = timersQuery.docs.map(doc => doc.data());
+        
+        // Calculate productivity metrics
+        const productivity = {
+            averageTimerDuration: userTimers.length > 0 
+                ? Math.round(userTimers.reduce((sum, t) => sum + t.duration, 0) / userTimers.length)
+                : 0,
+            mostActiveHour: getMostActiveHour(userTimers),
+            timerCompletionRate: calculateCompletionRate(userTimers),
+            favoriteTeams: getFavoriteTeams(userTimers)
+        };
+        
+        res.json({
+            success: true,
+            userId: req.user.id,
+            period: {
+                days: days,
+                startDate: new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString(),
+                endDate: new Date().toISOString()
+            },
+            usage: usage,
+            apiKeys: apiKeyStats,
+            productivity: productivity,
+            tier: req.user.tier
+        });
+    } catch (error) {
+        console.error('Personal analytics error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Helper functions for analytics
+function getMostActiveHour(timers) {
+    const hourCounts = {};
+    timers.forEach(timer => {
+        const hour = new Date(timer.createdAt?.toDate?.() || timer.createdAt).getHours();
+        hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+    });
+    
+    let mostActiveHour = 0;
+    let maxCount = 0;
+    Object.entries(hourCounts).forEach(([hour, count]) => {
+        if (count > maxCount) {
+            maxCount = count;
+            mostActiveHour = parseInt(hour);
+        }
+    });
+    
+    return `${mostActiveHour}:00`;
+}
+
+function calculateCompletionRate(timers) {
+    if (timers.length === 0) return 0;
+    const completed = timers.filter(t => t.status === 'expired').length;
+    return Math.round((completed / timers.length) * 100);
+}
+
+function getFavoriteTeams(timers) {
+    const teamCounts = {};
+    timers.forEach(timer => {
+        if (timer.team) {
+            teamCounts[timer.team] = (teamCounts[timer.team] || 0) + 1;
+        }
+    });
+    
+    return Object.entries(teamCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([team, count]) => ({ team, count }));
+}
+
 // Billing and subscription endpoints
 app.post('/billing/create-checkout', async (req, res) => {
     try {
         const { priceId } = req.body;
-        const successUrl = req.body.successUrl || 'https://minoots.com/account?upgraded=true';
-        const cancelUrl = req.body.cancelUrl || 'https://minoots.com/pricing';
+        const successUrl = req.body.successUrl || 'https://github.com/Domusgpt/minoots-timer-system#account-management';
+        const cancelUrl = req.body.cancelUrl || 'https://github.com/Domusgpt/minoots-timer-system#pricing';
         
         // Check if valid price ID
         if (!Object.values(PRICES).includes(priceId)) {
@@ -445,7 +953,7 @@ app.post('/billing/create-checkout', async (req, res) => {
 
 app.post('/billing/portal', async (req, res) => {
     try {
-        const returnUrl = req.body.returnUrl || 'https://minoots.com/account';
+        const returnUrl = req.body.returnUrl || 'https://github.com/Domusgpt/minoots-timer-system#account-management';
         const portalUrl = await createBillingPortalSession(req.user.id, returnUrl);
         
         res.json({
@@ -513,6 +1021,80 @@ app.get('/pricing', (req, res) => {
                     'SLA guarantee'
                 ]
             }
+        }
+    });
+});
+
+app.get('/docs', (req, res) => {
+    res.json({
+        success: true,
+        title: 'MINOOTS Timer System API Documentation',
+        version: '2.0.0',
+        description: 'Independent Timer System for Autonomous Agents & Enterprise Workflows',
+        baseUrl: 'https://api-m3waemr5lq-uc.a.run.app',
+        authentication: {
+            methods: ['Firebase Auth', 'API Key'],
+            headers: {
+                'Authorization': 'Bearer <firebase_jwt_token>',
+                'x-api-key': 'mnt_<your_api_key>'
+            },
+            anonymous: {
+                note: 'Anonymous usage allowed with limits',
+                limits: {
+                    dailyTimers: 5,
+                    dailyRequests: 50,
+                    maxDuration: '1h'
+                }
+            }
+        },
+        endpoints: {
+            timers: {
+                'POST /timers': 'Create a new timer',
+                'GET /timers': 'List timers with filtering',
+                'GET /timers/:id': 'Get specific timer details',
+                'DELETE /timers/:id': 'Delete a timer',
+                'POST /quick/wait': 'Create simple wait timer'
+            },
+            organizations: {
+                'POST /organizations': 'Create organization (Team tier+)',
+                'GET /organizations': 'List user organizations',
+                'GET /organizations/:id': 'Get organization details',
+                'POST /organizations/:id/invite': 'Invite user to organization',
+                'POST /organizations/:id/projects': 'Create project',
+                'GET /organizations/:id/projects': 'List organization projects'
+            },
+            account: {
+                'POST /account/api-keys': 'Create API key',
+                'GET /account/api-keys': 'List API keys',
+                'PUT /account/api-keys/:id': 'Update API key',
+                'DELETE /account/api-keys/:id': 'Revoke API key',
+                'GET /account/usage': 'Get usage statistics'
+            },
+            analytics: {
+                'GET /analytics/personal': 'Personal productivity analytics (Team tier+)',
+                'GET /analytics/organization/:id': 'Organization analytics (Team tier+)',
+                'GET /analytics/team/:name': 'Team coordination analytics (Team tier+)'
+            },
+            billing: {
+                'POST /billing/create-checkout': 'Create Stripe checkout',
+                'POST /billing/portal': 'Access billing portal',
+                'GET /billing/subscription': 'Get subscription details'
+            },
+            public: {
+                'GET /health': 'API health check',
+                'GET /pricing': 'Pricing tiers and features',
+                'GET /docs': 'This documentation endpoint'
+            }
+        },
+        resources: {
+            github: 'https://github.com/Domusgpt/minoots-timer-system',
+            documentation: 'https://github.com/Domusgpt/minoots-timer-system/tree/main/docs',
+            examples: 'https://github.com/Domusgpt/minoots-timer-system#examples',
+            mcp_integration: 'https://github.com/Domusgpt/minoots-timer-system#mcp-integration'
+        },
+        support: {
+            issues: 'https://github.com/Domusgpt/minoots-timer-system/issues',
+            discussions: 'https://github.com/Domusgpt/minoots-timer-system/discussions'
         }
     });
 });
@@ -615,4 +1197,21 @@ exports.cleanupTimers = onSchedule('every 24 hours', async (event) => {
         return null;
     });
 
+// RBAC Cloud Function Triggers
+const {
+    syncUserClaims,
+    syncOrganizationClaims,
+    syncSubscriptionClaims,
+    cleanupOrphanedClaims,
+    manualClaimsSync
+} = require('./rbac-system/core/CloudFunctionTriggers');
+
+// Export RBAC triggers
+exports.syncUserClaims = syncUserClaims;
+exports.syncOrganizationClaims = syncOrganizationClaims;
+exports.syncSubscriptionClaims = syncSubscriptionClaims;
+exports.cleanupOrphanedClaims = cleanupOrphanedClaims;
+exports.manualClaimsSync = manualClaimsSync;
+
+// Main API export
 exports.api = onRequest(app);

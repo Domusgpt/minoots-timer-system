@@ -36,10 +36,21 @@ class MinootsMCPServer {
 
   async makeAPIRequest(endpoint, options = {}) {
     const url = `${MINOOTS_API_BASE}${endpoint}`;
+    
+    // Get API key from environment variable
+    const apiKey = process.env.MINOOTS_API_KEY;
+    if (!apiKey) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'MINOOTS_API_KEY environment variable not set. MCP server requires API key for authentication.'
+      );
+    }
+    
     const config = {
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'MINOOTS-MCP-Server/1.0.0',
+        'x-api-key': apiKey,
       },
       ...options,
     };
