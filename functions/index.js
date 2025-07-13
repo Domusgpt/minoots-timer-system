@@ -1,15 +1,35 @@
-const functions = require('firebase-functions');
+const { onRequest } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onInit } = require('firebase-functions/v2/core');
 const admin = require('firebase-admin');
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
-admin.initializeApp();
-const db = admin.firestore();
+// Import middleware and utilities
+const { authenticateUser, requireTier, setDb } = require('./middleware/auth');
+const { dynamicRateLimiter, expensiveOperationLimiter } = require('./middleware/rateLimiter');
+const { usageTrackingMiddleware, checkTimerLimit, checkConcurrentTimerLimit, trackTimerCreation } = require('./utils/usageTracking');
+const { createApiKey, getUserApiKeys, revokeApiKey, updateApiKeyName, getApiKeyStats } = require('./utils/apiKey');
+const { createCheckoutSession, handleSubscriptionCreated, handleSubscriptionCanceled, createBillingPortalSession, getUserSubscription, PRICES } = require('./utils/stripe');
+
+let db;
+
+onInit(() => {
+  admin.initializeApp();
+  db = admin.firestore();
+  // Set db reference for auth middleware
+  setDb(db);
+});
 
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
+
+// Apply middleware in order
+app.use(usageTrackingMiddleware);
+app.use(authenticateUser);
+app.use(dynamicRateLimiter);
 
 // Real Timer class with Firestore
 class RealTimer {
@@ -33,17 +53,19 @@ class RealTimer {
             id: timerId,
             name: config.name || timerId,
             agentId: config.agent_id || 'unknown_agent',
-            team: config.team,
             duration,
             startTime: now,
             endTime: now + duration,
             status: 'running',
             events: config.events || {},
             metadata: config.metadata || {},
-            scenario: config.scenario,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         };
+        
+        // Add optional fields only if they exist
+        if (config.team) timerData.team = config.team;
+        if (config.scenario) timerData.scenario = config.scenario;
         
         // Store in Firestore
         await db.collection('timers').doc(timerId).set(timerData);
@@ -120,7 +142,7 @@ class RealTimer {
         // Execute webhooks
         if (timer.events?.on_expire?.webhook) {
             try {
-                const fetch = (await import('node-fetch')).default;
+                // Use built-in fetch in Node.js 18+
                 const response = await fetch(timer.events.on_expire.webhook, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -160,10 +182,66 @@ class RealTimer {
 }
 
 // API Routes
-app.post('/timers', async (req, res) => {
+
+// Timer creation with limits and tracking
+app.post('/timers', expensiveOperationLimiter, async (req, res) => {
     try {
-        const timer = await RealTimer.create(req.body);
-        res.status(201).json({ success: true, timer });
+        // Check daily timer limit
+        const dailyCheck = await checkTimerLimit(req.user.id, req.user.tier);
+        if (!dailyCheck.allowed) {
+            return res.status(429).json({
+                success: false,
+                error: `Daily timer limit reached (${dailyCheck.limit} timers per day)`,
+                used: dailyCheck.used,
+                limit: dailyCheck.limit,
+                upgradeUrl: req.user.tier === 'free' ? 'https://minoots.com/pricing' : null
+            });
+        }
+
+        // Check concurrent timer limit
+        const concurrentCheck = await checkConcurrentTimerLimit(req.user.id, req.user.tier);
+        if (!concurrentCheck.allowed) {
+            return res.status(429).json({
+                success: false,
+                error: `Concurrent timer limit reached (${concurrentCheck.limit} active timers)`,
+                current: concurrentCheck.current,
+                limit: concurrentCheck.limit,
+                upgradeUrl: req.user.tier === 'free' ? 'https://minoots.com/pricing' : null
+            });
+        }
+
+        // Add user context to timer creation
+        const timerConfig = {
+            ...req.body,
+            agent_id: req.body.agent_id || req.user.id,
+            metadata: {
+                ...req.body.metadata,
+                createdBy: req.user.id,
+                userTier: req.user.tier
+            }
+        };
+
+        const timer = await RealTimer.create(timerConfig);
+        
+        // Track timer creation
+        await trackTimerCreation(req.user.id, timer);
+        
+        res.status(201).json({ 
+            success: true, 
+            timer,
+            usage: {
+                daily: {
+                    used: dailyCheck.used + 1,
+                    limit: dailyCheck.limit,
+                    remaining: dailyCheck.remaining - 1
+                },
+                concurrent: {
+                    current: concurrentCheck.current + 1,
+                    limit: concurrentCheck.limit,
+                    remaining: concurrentCheck.remaining - 1
+                }
+            }
+        });
     } catch (error) {
         console.error('Create timer error:', error);
         res.status(400).json({ success: false, error: error.message });
@@ -243,18 +321,260 @@ app.post('/teams/:team/broadcast', async (req, res) => {
     }
 });
 
+// API Key Management Endpoints
+app.post('/account/api-keys', async (req, res) => {
+    try {
+        const keyName = req.body.name || 'Default Key';
+        const apiKeyData = await createApiKey(req.user.id, req.user.email, req.user.tier, keyName);
+        
+        res.status(201).json({
+            success: true,
+            ...apiKeyData,
+            warning: 'Save this API key - it will not be shown again!'
+        });
+    } catch (error) {
+        console.error('Create API key error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/account/api-keys', async (req, res) => {
+    try {
+        const keys = await getUserApiKeys(req.user.id);
+        res.json({ success: true, apiKeys: keys });
+    } catch (error) {
+        console.error('List API keys error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete('/account/api-keys/:keyId', async (req, res) => {
+    try {
+        await revokeApiKey(req.user.id, req.params.keyId);
+        res.json({ success: true, message: 'API key revoked successfully' });
+    } catch (error) {
+        console.error('Revoke API key error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.put('/account/api-keys/:keyId', async (req, res) => {
+    try {
+        await updateApiKeyName(req.user.id, req.params.keyId, req.body.name);
+        res.json({ success: true, message: 'API key updated successfully' });
+    } catch (error) {
+        console.error('Update API key error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Account and usage endpoints
+app.get('/account/usage', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 7;
+        const { getUserUsageStats } = require('./utils/usageTracking');
+        const usage = await getUserUsageStats(req.user.id, days);
+        const apiKeyStats = await getApiKeyStats(req.user.id);
+        
+        res.json({
+            success: true,
+            usage,
+            apiKeys: apiKeyStats,
+            tier: req.user.tier
+        });
+    } catch (error) {
+        console.error('Get usage error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// MCP access endpoint (Pro tier only)
+app.get('/mcp/config', requireTier('pro'), async (req, res) => {
+    try {
+        res.json({
+            success: true,
+            mcpServer: {
+                command: 'node',
+                args: [`${process.env.FUNCTIONS_SOURCE}/mcp/index.js`],
+                env: {
+                    MINOOTS_API_BASE: process.env.MINOOTS_API_BASE || 'https://api-m3waemr5lq-uc.a.run.app'
+                }
+            },
+            message: 'Add this configuration to your Claude Desktop settings'
+        });
+    } catch (error) {
+        console.error('MCP config error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Billing and subscription endpoints
+app.post('/billing/create-checkout', async (req, res) => {
+    try {
+        const { priceId } = req.body;
+        const successUrl = req.body.successUrl || 'https://minoots.com/account?upgraded=true';
+        const cancelUrl = req.body.cancelUrl || 'https://minoots.com/pricing';
+        
+        // Check if valid price ID
+        if (!Object.values(PRICES).includes(priceId)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid price ID',
+                availablePrices: Object.keys(PRICES)
+            });
+        }
+
+        const session = await createCheckoutSession(
+            req.user.id,
+            req.user.email,
+            priceId,
+            successUrl,
+            cancelUrl
+        );
+
+        res.json({
+            success: true,
+            sessionId: session.sessionId,
+            checkoutUrl: session.checkoutUrl
+        });
+    } catch (error) {
+        console.error('Create checkout error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/billing/portal', async (req, res) => {
+    try {
+        const returnUrl = req.body.returnUrl || 'https://minoots.com/account';
+        const portalUrl = await createBillingPortalSession(req.user.id, returnUrl);
+        
+        res.json({
+            success: true,
+            portalUrl: portalUrl
+        });
+    } catch (error) {
+        console.error('Billing portal error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/billing/subscription', async (req, res) => {
+    try {
+        const subscription = await getUserSubscription(req.user.id);
+        res.json({
+            success: true,
+            ...subscription
+        });
+    } catch (error) {
+        console.error('Get subscription error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/pricing', (req, res) => {
+    res.json({
+        success: true,
+        tiers: {
+            free: {
+                price: 0,
+                name: 'Free',
+                features: [
+                    '5 concurrent timers',
+                    '100 timers per month',
+                    'Basic webhooks',
+                    '7 day history'
+                ]
+            },
+            pro: {
+                price: 19,
+                name: 'Pro',
+                monthly: PRICES.pro_monthly,
+                yearly: PRICES.pro_yearly,
+                features: [
+                    'Unlimited timers',
+                    'MCP Claude integration',
+                    'Token reset scheduling',
+                    'Advanced webhooks',
+                    '90 day history',
+                    'Priority support'
+                ]
+            },
+            team: {
+                price: 49,
+                name: 'Team',
+                monthly: PRICES.team_monthly,
+                yearly: PRICES.team_yearly,
+                features: [
+                    'Everything in Pro',
+                    'Unlimited team members',
+                    'Admin controls',
+                    'Usage analytics',
+                    'Custom integrations',
+                    'SLA guarantee'
+                ]
+            }
+        }
+    });
+});
+
+// Stripe webhook handler (raw body required)
+app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req, res) => {
+    const sig = req.headers['stripe-signature'];
+    
+    try {
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
+        const event = stripe.webhooks.constructEvent(
+            req.body,
+            sig,
+            process.env.STRIPE_WEBHOOK_SECRET || 'whsec_placeholder'
+        );
+
+        console.log('Stripe webhook event:', event.type);
+
+        switch (event.type) {
+            case 'customer.subscription.created':
+                await handleSubscriptionCreated(event.data.object);
+                break;
+            case 'customer.subscription.updated':
+                await handleSubscriptionCreated(event.data.object); // Same handler
+                break;
+            case 'customer.subscription.deleted':
+                await handleSubscriptionCanceled(event.data.object);
+                break;
+            case 'invoice.payment_succeeded':
+                console.log('Payment succeeded for subscription:', event.data.object.subscription);
+                break;
+            case 'invoice.payment_failed':
+                console.log('Payment failed for subscription:', event.data.object.subscription);
+                break;
+            default:
+                console.log(`Unhandled event type: ${event.type}`);
+        }
+
+        res.json({ received: true });
+    } catch (err) {
+        console.error('Webhook error:', err);
+        res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+});
+
 app.get('/health', (req, res) => {
     res.json({
         status: 'healthy',
         timestamp: Date.now(),
-        service: 'MINOOTS Real Firebase Functions'
+        service: 'MINOOTS Real Firebase Functions',
+        version: '2.0.0',
+        features: {
+            authentication: true,
+            rateLimiting: true,
+            usageTracking: true,
+            mcpIntegration: true
+        }
     });
 });
 
 // Real timer expiration checker
-exports.checkExpiredTimers = functions.pubsub
-    .schedule('every 1 minutes')
-    .onRun(async (context) => {
+exports.checkExpiredTimers = onSchedule('every 1 minutes', async (event) => {
         console.log('Checking for expired timers...');
         
         const now = Date.now();
@@ -277,9 +597,7 @@ exports.checkExpiredTimers = functions.pubsub
     });
 
 // Cleanup old expired timers
-exports.cleanupTimers = functions.pubsub
-    .schedule('every 24 hours')
-    .onRun(async (context) => {
+exports.cleanupTimers = onSchedule('every 24 hours', async (event) => {
         const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
         
         const oldTimersQuery = await db.collection('timers')
@@ -297,4 +615,4 @@ exports.cleanupTimers = functions.pubsub
         return null;
     });
 
-exports.api = functions.https.onRequest(app);
+exports.api = onRequest(app);

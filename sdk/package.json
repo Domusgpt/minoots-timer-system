@@ -1,0 +1,37 @@
+{
+  "name": "minoots-sdk",
+  "version": "1.0.0",
+  "description": "Official Node.js SDK for MINOOTS Independent Timer System",
+  "main": "minoots-sdk.js",
+  "scripts": {
+    "test": "node test/sdk-test.js",
+    "example": "node examples/basic-usage.js"
+  },
+  "keywords": [
+    "timer",
+    "autonomous",
+    "agents",
+    "minoots",
+    "sdk",
+    "api",
+    "enterprise"
+  ],
+  "author": "Paul Phillips <phillips.paul.email@gmail.com>",
+  "license": "PROPRIETARY",
+  "dependencies": {},
+  "peerDependencies": {
+    "node-fetch": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Domusgpt/minoots-timer-system.git",
+    "directory": "sdk"
+  },
+  "homepage": "https://github.com/Domusgpt/minoots-timer-system#readme",
+  "bugs": {
+    "url": "https://github.com/Domusgpt/minoots-timer-system/issues"
+  }
+}

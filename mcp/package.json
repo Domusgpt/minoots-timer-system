@@ -1,0 +1,40 @@
+{
+  "name": "minoots-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for MINOOTS Independent Timer System - Claude agent integration",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node test/mcp-test.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "agents",
+    "timers",
+    "minoots",
+    "autonomous",
+    "coordination"
+  ],
+  "author": "Paul Phillips <phillips.paul.email@gmail.com>",
+  "license": "PROPRIETARY",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "node-fetch": "^3.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Domusgpt/minoots-timer-system.git",
+    "directory": "mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/Domusgpt/minoots-timer-system/issues"
+  },
+  "homepage": "https://github.com/Domusgpt/minoots-timer-system#readme"
+}

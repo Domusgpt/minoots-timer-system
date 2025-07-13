@@ -1,0 +1,267 @@
+{
+  "info": {
+    "name": "MINOOTS Authentication Tests",
+    "description": "Test suite for MINOOTS authentication and API key functionality",
+    "version": "2.0.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{firebase_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://api-m3waemr5lq-uc.a.run.app",
+      "type": "string"
+    },
+    {
+      "key": "firebase_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "api_key",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check (No Auth)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Timer (No Auth) - Should Fail",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"test_timer\",\n  \"duration\": \"30s\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/timers",
+          "host": ["{{base_url}}"],
+          "path": ["timers"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create API Key",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{firebase_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Test API Key\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/account/api-keys",
+          "host": ["{{base_url}}"],
+          "path": ["account", "api-keys"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 201) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('api_key', response.apiKey);",
+              "    console.log('API Key saved:', response.apiKey);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "List API Keys",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{firebase_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/account/api-keys",
+          "host": ["{{base_url}}"],
+          "path": ["account", "api-keys"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Timer with API Key",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"api_key_timer\",\n  \"duration\": \"60s\",\n  \"metadata\": {\n    \"test\": \"api_key_auth\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/timers",
+          "host": ["{{base_url}}"],
+          "path": ["timers"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Timer with Bearer Token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{firebase_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"bearer_token_timer\",\n  \"duration\": \"45s\",\n  \"metadata\": {\n    \"test\": \"bearer_auth\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/timers",
+          "host": ["{{base_url}}"],
+          "path": ["timers"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "List Timers with API Key",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/timers",
+          "host": ["{{base_url}}"],
+          "path": ["timers"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Usage Stats",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{firebase_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/account/usage?days=7",
+          "host": ["{{base_url}}"],
+          "path": ["account", "usage"],
+          "query": [
+            {
+              "key": "days",
+              "value": "7"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Test Rate Limiting (Send Multiple Requests)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"rate_limit_test\",\n  \"duration\": \"10s\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/timers",
+          "host": ["{{base_url}}"],
+          "path": ["timers"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "MCP Configuration (Pro Only)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{firebase_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/mcp/config",
+          "host": ["{{base_url}}"],
+          "path": ["mcp", "config"]
+        }
+      },
+      "response": []
+    }
+  ]
+}
