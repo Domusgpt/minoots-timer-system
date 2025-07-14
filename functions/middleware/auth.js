@@ -166,7 +166,12 @@ const authenticateUser = async (req, res, next) => {
  */
 async function handleAnonymousUser(req, res) {
   try {
-    const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
+    // Fixed for Firebase Functions environment
+    const clientIp = req.headers['x-forwarded-for'] || 
+                     req.connection?.remoteAddress || 
+                     req.socket?.remoteAddress ||
+                     req.ip || 
+                     'unknown';
     const today = new Date().toISOString().split('T')[0];
     const anonymousId = `anon_${clientIp}_${today}`;
     

@@ -1,316 +1,201 @@
-# MINOOTS ⏱️🚀
+# ⏲️ MINOOTS Timer System
 
-**Independent Timer System for Autonomous Agents & Enterprise Workflows**
+**A Firebase-based timer system for autonomous agents and workflows.**
 
-[![npm version](https://badge.fury.io/js/%40minoots%2Ftimer-system.svg)](https://badge.fury.io/js/%40minoots%2Ftimer-system)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://github.com/domusgpt/minoots-timer-system/workflows/Tests/badge.svg)](https://github.com/domusgpt/minoots-timer-system/actions)
-[![Coverage](https://codecov.io/gh/domusgpt/minoots-timer-system/branch/main/graph/badge.svg)](https://codecov.io/gh/domusgpt/minoots-timer-system)
+## 🎯 WHAT THIS IS
 
-## 🎯 What is MINOOTS?
+MINOOTS is an experimental timer system that provides persistent, reliable timers for AI agents and applications. Unlike `setTimeout()` which dies when your process crashes, MINOOTS timers run in Firebase Functions and can trigger webhooks when they expire.
 
-MINOOTS is a production-ready timer system that runs **independently** of your main application. Perfect for:
+## ✅ WHAT ACTUALLY WORKS
 
-- 🤖 **AI Agents** that need persistent timers across sessions
-- 🔄 **Workflow Automation** with reliable scheduling
-- 🏢 **Enterprise Systems** requiring bulletproof timing
-- 🚀 **Background Jobs** that survive process crashes
+### Current Features
+- **Timer Creation**: Create timers with specified durations
+- **Timer Management**: List, get status, and delete timers  
+- **Webhook Notifications**: Get notified when timers expire
+- **Firebase Authentication**: Secure API with user accounts
+- **Basic RBAC**: Role-based access control (partially deployed)
+- **Organization Support**: Team management (implemented, needs testing)
 
-## 🚀 Quick Start
+### Live API
+- **Base URL**: https://api-m3waemr5lq-uc.a.run.app
+- **Health Check**: https://api-m3waemr5lq-uc.a.run.app/health
 
+## 🚀 QUICK START
+
+### 1. Test the Health Endpoint
 ```bash
-npm install -g @minoots/timer-system
-minoots create 30s "coffee_break"
-minoots list
+curl https://api-m3waemr5lq-uc.a.run.app/health
 ```
 
-```javascript
-const MINOOTS = require('@minoots/timer-system');
-
-// Create a timer that survives process crashes
-const timer = MINOOTS.create({
-  name: 'backup_database',
-  duration: '1h',
-  events: {
-    on_expire: {
-      webhook: 'https://api.example.com/backup-complete',
-      message: 'Database backup completed'
+### 2. Create a Timer (Anonymous - Limited)
+```bash
+curl -X POST https://api-m3waemr5lq-uc.a.run.app/timers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Test Timer",
+    "duration": "5m",
+    "events": {
+      "on_expire": {
+        "webhook": "https://webhook.site/your-unique-url"
+      }
     }
-  }
-});
-
-console.log(`Timer ${timer.id} will execute in 1 hour`);
+  }'
 ```
 
-## ✨ Key Features
+### 3. List Your Timers
+```bash
+curl https://api-m3waemr5lq-uc.a.run.app/timers
+```
 
-### 🛡️ Independent Execution
-- Timers run in separate processes
-- Survive main application crashes
-- Continue running across system reboots
-- No dependency on parent process lifecycle
+## 📝 API REFERENCE
 
-### 🔧 Powerful Events
-```javascript
+### Authentication
+- **Anonymous**: Limited to 5 timers per day per IP
+- **Firebase Auth**: Full access with user account
+- **API Keys**: For programmatic access (requires auth)
+
+### Endpoints
+
+#### Create Timer
+```http
+POST /timers
+Content-Type: application/json
+
 {
-  events: {
-    on_expire: {
-      webhook: 'https://api.example.com/notify',
-      file_write: { file: 'result.txt', content: 'Timer done!' },
-      command: 'npm run deploy',
-      message: 'Deployment timer expired'
+  "name": "Timer Name",
+  "duration": "30m",
+  "events": {
+    "on_expire": {
+      "webhook": "https://yourapp.com/webhook"
     }
   }
 }
 ```
 
-### 📡 Real-time Monitoring
-```javascript
-// Get live timer status
-const status = MINOOTS.get('timer_id');
-console.log(`${status.progress * 100}% complete`);
-console.log(`${status.timeRemaining}ms remaining`);
+#### List Timers
+```http
+GET /timers
 ```
 
-### 🌐 Cloud Integration
-- Firebase backend for global synchronization
-- REST API for cross-platform access
-- Team collaboration and sharing
-- Enterprise authentication (SSO)
-
-## 📖 Documentation
-
-### Basic Usage
-
-#### Create Timers
-```javascript
-// Simple timer
-MINOOTS.create({ name: 'simple', duration: '30s' });
-
-// Complex workflow timer
-MINOOTS.create({
-  name: 'deployment_pipeline',
-  duration: '15m',
-  metadata: { environment: 'production', version: '1.2.3' },
-  events: {
-    on_expire: {
-      webhook: 'https://api.company.com/deploy-complete',
-      command: 'docker deploy production:latest',
-      file_write: {
-        file: 'deployment.log',
-        content: 'Production deployment completed at ${timestamp}'
-      }
-    }
-  }
-});
+#### Get Timer
+```http
+GET /timers/{id}
 ```
 
-#### Duration Formats
-```javascript
-'30s'    // 30 seconds
-'5m'     // 5 minutes  
-'2h'     // 2 hours
-'1d'     // 1 day
-3600000  // milliseconds
+#### Delete Timer
+```http
+DELETE /timers/{id}
 ```
 
-#### Monitor Timers
-```javascript
-// List all active timers
-const timers = MINOOTS.list();
-timers.forEach(t => {
-  console.log(`${t.name}: ${Math.round(t.progress * 100)}% complete`);
-});
-
-// Get specific timer
-const timer = MINOOTS.get('timer_id');
-console.log(`Status: ${timer.status}`);
-console.log(`Remaining: ${timer.timeRemaining}ms`);
-
-// Read timer logs
-const logs = MINOOTS.logs('timer_id');
-console.log(logs);
+#### Health Check
+```http
+GET /health
 ```
 
-#### Cancel & Cleanup
-```javascript
-// Cancel specific timer
-MINOOTS.cancel('timer_id');
+### Duration Formats
+- `"30s"` - 30 seconds
+- `"15m"` - 15 minutes  
+- `"2h"` - 2 hours
+- `"1d"` - 1 day
+- `1800000` - milliseconds
 
-// Clean up completed timers
-MINOOTS.cleanup();
-```
+## 🏗️ SYSTEM ARCHITECTURE
 
-### Advanced Features
+### Technology Stack
+- **Backend**: Firebase Functions (Node.js)
+- **Database**: Firestore
+- **Authentication**: Firebase Auth
+- **Hosting**: Google Cloud Run
 
-#### Timer Chains
-```javascript
-// Create dependent timers
-const timer1 = MINOOTS.create({ name: 'step1', duration: '1m' });
-const timer2 = MINOOTS.create({ 
-  name: 'step2', 
-  duration: '30s',
-  depends_on: timer1.id 
-});
-```
+### Current Status
+- ✅ **Core API**: Deployed and working
+- ✅ **Timer Operations**: Create, read, update, delete
+- ✅ **Authentication**: Firebase Auth integration
+- ✅ **RBAC System**: Implemented (trigger functions need retry)
+- ✅ **Organization Management**: Coded (needs testing)
+- ⏳ **MCP Integration**: Planned
+- ⏳ **Web Dashboard**: Planned
 
-#### Conditional Execution
-```javascript
-MINOOTS.create({
-  name: 'conditional_deploy',
-  duration: '5m',
-  conditions: {
-    environment: 'production',
-    tests_passed: true
-  }
-});
-```
-
-#### Team Collaboration
-```javascript
-// Share timer with team
-MINOOTS.share('timer_id', {
-  team: 'devops-team',
-  permissions: ['read', 'cancel']
-});
-```
-
-## 🛠️ Installation & Setup
+## 🔧 DEVELOPMENT
 
 ### Local Development
 ```bash
-git clone https://github.com/domusgpt/minoots-timer-system.git
+# Clone repository
+git clone https://github.com/Domusgpt/minoots-timer-system
 cd minoots-timer-system
+
+# Install dependencies
+cd functions
 npm install
-npm test
-npm start
+
+# Local testing
+npm run test
+
+# Deploy to Firebase
+firebase deploy --only functions
 ```
 
-### Cloud Setup (Firebase)
-```bash
-# Install Firebase CLI
-npm install -g firebase-tools
-
-# Deploy MINOOTS backend
-firebase login
-firebase deploy
-
-# Configure authentication
-firebase auth:import users.json
+### Project Structure
+```
+minoots-timer-system/
+├── functions/
+│   ├── index.js              # Main API server
+│   ├── middleware/auth.js    # Authentication middleware
+│   ├── rbac-system/          # Role-based access control
+│   └── utils/                # Utility functions
+├── docs/                     # Documentation (being corrected)
+├── README.md                 # This file
+└── firebase.json             # Firebase configuration
 ```
 
-### Docker Deployment
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 3000
-CMD ["npm", "start"]
-```
+## ⚠️ CURRENT LIMITATIONS
 
-```bash
-docker build -t minoots .
-docker run -d -p 3000:3000 minoots
-```
+- **No Web Interface**: API only, no dashboard yet
+- **Basic Error Handling**: Needs improvement
+- **Limited Documentation**: Being rewritten to reflect reality
+- **RBAC Incomplete**: Trigger functions need redeployment
+- **No SDK**: Direct API calls only
+- **No Enterprise Features**: Basic system only
 
-## 🔌 Integrations
+## 🚧 WHAT'S BEING FIXED
 
-### MCP (Model Context Protocol)
-```javascript
-// For AI agents using Claude Code
-const mcp = require('@minoots/mcp-extension');
+We recently discovered that much of our documentation contained false information about features that don't exist. We're currently:
 
-// Create timer through MCP
-await mcp.createTimer({
-  name: 'agent_task_timeout',
-  duration: '10m',
-  agent_id: 'claude_agent_001'
-});
-```
+1. **Auditing all documentation** for false claims
+2. **Removing fake pricing information** and enterprise features
+3. **Eliminating false contact information** and support claims  
+4. **Rewriting guides** to reflect actual capabilities
+5. **Testing existing features** to verify they work
 
-### REST API
-```bash
-# Create timer via API
-curl -X POST https://api.minoots.com/v1/timers \
-  -H "Authorization: Bearer $API_KEY" \
-  -d '{
-    "name": "api_timer",
-    "duration": "5m",
-    "events": {
-      "on_expire": {
-        "webhook": "https://myapp.com/timer-done"
-      }
-    }
-  }'
+See `DOCUMENTATION_FRAUD_AUDIT.md` for the complete correction log.
 
-# Get timer status
-curl https://api.minoots.com/v1/timers/timer_id \
-  -H "Authorization: Bearer $API_KEY"
-```
+## 📋 IMMEDIATE TODO
 
-### Webhooks
-```javascript
-// Receive timer events
-app.post('/webhook/timer-expired', (req, res) => {
-  const { timer, event, timestamp } = req.body;
-  console.log(`Timer ${timer.name} expired at ${timestamp}`);
-  res.status(200).send('OK');
-});
-```
+- [ ] Complete RBAC deployment (retry trigger functions)
+- [ ] Test organization management features
+- [ ] Create truthful API documentation
+- [ ] Build basic web dashboard
+- [ ] Add comprehensive error handling
+- [ ] Write actual quick start guide
+- [ ] Implement MCP integration for Claude
 
-## 💰 Pricing
+## 🤝 CONTRIBUTING
 
-### Free Tier
-- ✅ Up to 100 active timers
-- ✅ Basic webhook support
-- ✅ Community support
-- ✅ 30-day history
+This is an experimental project. If you want to contribute:
 
-### Pro ($9/month)
-- ✅ Up to 10,000 timers
-- ✅ Advanced webhooks
-- ✅ Team collaboration
-- ✅ Priority support
-- ✅ 1-year history
+1. Test the current API and report issues
+2. Help correct the fraudulent documentation
+3. Suggest realistic features that would be useful
+4. Help test the RBAC system once deployed
 
-### Enterprise ($99/month)
-- ✅ Unlimited timers
-- ✅ SSO integration
-- ✅ Custom integrations
-- ✅ SLA guarantees
-- ✅ Dedicated support
+## 📞 CONTACT
 
-## 🤝 Contributing
+- **Repository**: https://github.com/Domusgpt/minoots-timer-system
+- **Issues**: Use GitHub issues for bug reports
+- **Questions**: Create GitHub discussions
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-```bash
-# Development setup
-npm install
-npm run dev
-
-# Run tests
-npm test
-
-# Build for production
-npm run build
-```
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## 🆘 Support
-
-- 📚 [Documentation](https://docs.minoots.com)
-- 💬 [Discord Community](https://discord.gg/minoots)
-- 🐛 [Report Issues](https://github.com/domusgpt/minoots-timer-system/issues)
-- 📧 [Email Support](mailto:support@minoots.com)
+**Note**: We do not currently have enterprise support, paid plans, or professional services. Those were erroneously documented and are being removed.
 
 ---
 
-**Built with ❤️ for autonomous agents and enterprise workflows**
-
-*MINOOTS: Because your timers should be as reliable as your code.*
+**This is experimental software. Use at your own risk. No warranties or guarantees are provided.**
