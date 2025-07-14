@@ -239,7 +239,7 @@ app.post('/timers', expensiveOperationLimiter, requirePermission('create', 'time
                 ...req.body.metadata,
                 createdBy: req.user.id,
                 userTier: req.user.tier,
-                permissionSource: req.permissionSource
+                permissionSource: req.permissionSource || 'anonymous'
             }
         };
 
