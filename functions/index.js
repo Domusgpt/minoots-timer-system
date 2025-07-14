@@ -1155,6 +1155,49 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Manual timer expiration trigger (for testing scheduled function logic)
+app.post('/manual-expire-timers', async (req, res) => {
+    try {
+        console.log('Manual timer expiration triggered...');
+        
+        const now = Date.now();
+        const expiredQuery = await db.collection('timers')
+            .where('status', '==', 'running')
+            .where('endTime', '<=', now)
+            .get();
+        
+        const expiredTimers = [];
+        const promises = expiredQuery.docs.map(async doc => {
+            const timer = await RealTimer.expire(doc.id);
+            expiredTimers.push({
+                id: doc.id,
+                name: timer?.name || 'unknown',
+                webhook: timer?.events?.on_expire?.webhook || null,
+                message: timer?.events?.on_expire?.message || null,
+                data: timer?.events?.on_expire?.data || null
+            });
+            return timer;
+        });
+        
+        await Promise.all(promises);
+        
+        res.json({
+            success: true,
+            processedTimers: expiredTimers.length,
+            expiredTimers: expiredTimers,
+            timestamp: now
+        });
+        
+        console.log(`Manually processed ${expiredTimers.length} expired timers`);
+    } catch (error) {
+        console.error('Manual expiration error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // Real timer expiration checker
 exports.checkExpiredTimers = onSchedule('every 1 minutes', async (event) => {
         console.log('Checking for expired timers...');
