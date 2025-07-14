@@ -157,15 +157,24 @@ class RealTimer {
         if (timer.events?.on_expire?.webhook) {
             try {
                 // Use built-in fetch in Node.js 18+
+                const body = JSON.stringify({
+                    event: 'timer_expired',
+                    timer,
+                    message: timer.events.on_expire.message,
+                    data: timer.events.on_expire.data
+                });
+
+                const crypto = require('crypto');
+                const secret = process.env.MINOOTS_WEBHOOK_SECRET;
+                const signature = crypto.createHmac('sha256', secret).update(body).digest('hex');
+
                 const response = await fetch(timer.events.on_expire.webhook, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        event: 'timer_expired',
-                        timer,
-                        message: timer.events.on_expire.message,
-                        data: timer.events.on_expire.data
-                    })
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Minoots-Signature': signature
+                    },
+                    body: body
                 });
                 console.log(`Webhook called: ${timer.events.on_expire.webhook} (${response.status})`);
             } catch (error) {

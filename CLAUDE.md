@@ -93,9 +93,32 @@
 └── RBAC_DEPLOYMENT_STATUS.md   ✅ RBAC deployment tracking
 ```
 
-## 🚨 CURRENT STATUS: PRODUCTION-READY SYSTEM
+## 🚨 CURRENT STATUS: PRODUCTION-READY SYSTEM + PREMIUM FEATURES
 
-### ✅ COMPLETED MAJOR MILESTONES
+### ✅ MAJOR SYSTEMS COMPLETED
+
+#### **🔥 TODAY'S CRITICAL FIXES (2025-07-14)**
+📋 **See**: `TODAYS_CRITICAL_FIXES.md` for complete technical details
+- ✅ **Express Rate Limiter**: Fixed all violations, proper JSON responses
+- ✅ **Firebase Deployments**: Smart initialization, no more timeouts  
+- ✅ **Timer Expiration**: All 16 expired timers processed successfully
+- ✅ **Firestore Validation**: Anonymous users can create timers
+- ✅ **Composite Index**: Memory filtering workaround implemented
+- ✅ **CRITICAL AUTH FIX**: Modified `requirePermission` middleware to allow anonymous timer creation
+  - **See**: `CRITICAL_AUTHENTICATION_FIX_2025-07-14.md` for exact code changes
+  - Anonymous users can now create timers and bootstrap API keys
+  - Deployed successfully at 05:05:12 UTC
+- ✅ **API KEY BOOTSTRAP FIX**: Modified `createApiKey` to handle anonymous users
+  - **See**: `API_KEY_BOOTSTRAP_ISSUE_2025-07-14.md` for implementation details
+  - Creates minimal user documents on-demand for anonymous users
+  - Deployed and verified at 05:12 UTC - full bootstrap flow working!
+
+#### **🚀 PREMIUM MCP TIMER COMMAND BRIDGE**
+📂 **Documentation**: `mcp-timer-bridge/CLAUDE.md` (READ BEFORE USING)
+- ✅ **Webhook Bridge**: Receives timer webhooks, queues Claude Code commands
+- ✅ **MCP Integration**: Ready for Claude Code testing
+- 💰 **Monetization**: Premium automation feature for paid users
+- 🎯 **Status**: Fully implemented, needs Claude Code integration verification
 
 #### **🎉 RBAC INTEGRATION COMPLETED (Phase 1B)**
 - ✅ **RBAC System**: Complete role-based access control implemented
@@ -121,6 +144,96 @@
 - ✅ **Timer Operations**: All CRUD operations with permission checking
 - ✅ **Webhook System**: Event-driven notifications with role validation
 - ✅ **Rate Limiting**: Tier-based limits with RBAC enforcement
+
+## 📁 ORGANIZED FILE STRUCTURE & REFERENCING RULES
+
+### **🚨 CRITICAL: READ BEFORE CODING**
+
+**NEVER search blindly or guess file locations. ALWAYS reference this structure first.**
+
+#### **🏗️ PRODUCTION SYSTEM STRUCTURE**
+```
+/mnt/c/Users/millz/minoots-timer-system/
+├── 📋 PLANNING & STRATEGY
+│   ├── CLAUDE.md                    ← Main Claude Code instructions (THIS FILE)
+│   ├── README.md                    ← Project overview for users
+│   ├── MINOOTS_MASTER_PLAN.md      ← 14-week roadmap
+│   ├── BUSINESS_MODEL_ANALYSIS.md   ← Monetization strategy
+│   ├── STRATEGIC_IMPLEMENTATION_PLAN.md ← Implementation phases
+│   ├── DEVELOPMENT_WORKFLOW.md     ← Git workflow & branching
+│   └── TODAYS_CRITICAL_FIXES.md    ← Today's technical achievements
+│
+├── 🚀 PRODUCTION CODE
+│   ├── functions/                   ← Firebase Functions (MAIN API)
+│   │   ├── CLAUDE.md               ← Firebase-specific instructions
+│   │   ├── index.js                ← Main API endpoints
+│   │   ├── middleware/             ← Auth, rate limiting
+│   │   ├── utils/                  ← Stripe, usage tracking, API keys
+│   │   └── rbac-system/            ← Complete RBAC implementation
+│   ├── independent-timer.js         ← Local timer system
+│   ├── firebase.json               ← Firebase configuration
+│   ├── firestore.rules             ← Database security rules
+│   └── package.json                ← Main project dependencies
+│
+├── 🤖 PRODUCTION COMMAND SYSTEM
+│   ├── mcp/                        ← Standard MCP server (FREE tier)
+│   │   ├── index.js                ← Official MCP SDK server
+│   │   └── package.json            ← MCP dependencies
+│   ├── system-daemon/              ← CRITICAL: Command injection daemon
+│   │   ├── minoots-timer-daemon.sh ← Main daemon that executes timer commands
+│   │   └── install-daemon.sh       ← Daemon installation script
+│   └── webhook-bridge/             ← 🚀 PRODUCTION: Cloud command queue (Firebase Functions)
+│       ├── functions/index.js      ← Firebase Functions for command storage
+│       ├── firebase.json           ← Firebase deployment config
+│       └── firestore.rules         ← Security rules for command queue
+│
+├── 🔧 USER TOOLS
+│   ├── sdk/                        ← User SDK for integration
+│   │   ├── minoots-sdk.js          ← Main SDK file
+│   │   └── examples/               ← Usage examples
+│   └── tests/                      ← Postman tests
+│
+└── 📚 ARCHIVES & DATA
+    ├── archives/                   ← Old/scattered docs (archived)
+    │   └── local-development-prototypes/ ← 🚨 ARCHIVED: Non-production prototypes (mcp-timer-bridge)
+    ├── active_timers/              ← Local timer storage
+    ├── examples/                   ← Usage examples
+    ├── TOXIC_AITRIPPINGBALLSSLUDGE/ ← Old fraudulent docs (marked toxic)
+    └── gemini.md                   ← Gemini integration notes
+```
+
+#### **🎯 REFERENCING RULES BEFORE CODING**
+
+**1. BEFORE EDITING ANY FILE:**
+   - Check this structure to confirm exact location
+   - Read the relevant nested CLAUDE.md if it exists
+   - Never guess paths or search blindly
+
+**2. IMPORTANT DOCUMENTATION WITH DETAILS:**
+   - **`functions/CLAUDE.md`**: Firebase v2 deployment standards, onInit() patterns, rate limiter fixes, RBAC lazy loading
+   - **`webhook-bridge/functions/index.js`**: 🚀 PRODUCTION command queue system for daemon polling
+   - **`system-daemon/minoots-timer-daemon.sh`**: CRITICAL daemon that polls webhook-bridge and executes commands in Claude Code sessions
+   - **`functions/rbac-system/README.md`**: Complete RBAC implementation, role hierarchy, permission checking, Custom Claims
+   - **`SYSTEM_ARCHITECTURE_CLARIFICATION.md`**: Production vs local system clarification
+   - **`TODAYS_CRITICAL_FIXES.md`**: Express rate limiter violations fixed, smart initialization, timer expiration verified, Firestore validation
+   - **`BUSINESS_MODEL_ANALYSIS.md`**: One-time payment strategy, free vs paid tiers, Firebase cost analysis, revenue projections
+   - **`MINOOTS_MASTER_PLAN.md`**: 14-week roadmap, phase-by-phase development, strategic milestones
+   - **`gemini.md`**: Gemini integration notes and collaboration patterns
+
+**3. CRITICAL FILE LOCATIONS WITH CONTEXT:**
+   - **`functions/index.js`**: Main API endpoints, timer CRUD, webhook handlers, checkExpiredTimers scheduler, RBAC-protected routes
+   - **`functions/middleware/rateLimiter.js`**: Pre-created tier-based rate limiters, Firebase Functions IP detection, express-rate-limit v7 compliance
+   - **`functions/middleware/auth.js`**: Firebase Auth + API keys, RBAC lazy loading, anonymous user handling, Custom Claims integration
+   - **`webhook-bridge/functions/index.js`**: 🚀 PRODUCTION - Cloud command queue storage that daemon polls for pending commands
+   - **`system-daemon/minoots-timer-daemon.sh`**: THE KEY COMPONENT - daemon that executes `claude --resume session_id` to inject commands
+   - **`mcp/index.js`**: Standard MCP server using official SDK, basic timer operations for free tier users
+   - **`functions/rbac-system/core/`**: CustomClaimsManager, RoleDefinitions, FirestoreSchema - complete RBAC implementation
+   - **`functions/utils/`**: stripe.js (payments), usageTracking.js (analytics), apiKey.js (API key management)
+
+**4. NEVER TOUCH THESE:**
+   - `archives/` - Old archived content
+   - `TOXIC_AITRIPPINGBALLSSLUDGE/` - Marked as fraudulent content
+   - `node_modules/` - Dependencies
 
 ### 🔥 IMMEDIATE NEXT ACTIONS
 

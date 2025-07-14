@@ -5,9 +5,11 @@
   "main": "index.js",
   "scripts": {
     "start": "node independent-timer.js",
+    "start:mcp": "node mcp-timer-server.js",
     "test": "jest",
     "build": "tsc",
     "dev": "nodemon independent-timer.js",
+    "dev:mcp": "nodemon mcp-timer-server.js",
     "lint": "eslint .",
     "docs": "typedoc",
     "deploy": "firebase deploy"

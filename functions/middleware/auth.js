@@ -308,10 +308,33 @@ const requireTier = (requiredTier) => {
 const requirePermission = (action, resourceType) => {
   return async (req, res, next) => {
     try {
+      // Handle anonymous users with their own permission logic
+      if (req.user?.isAnonymous) {
+        // Anonymous users can create timers within their limits
+        if (action === 'create' && resourceType === 'timers') {
+          return next(); // Allow anonymous timer creation
+        }
+        
+        // Anonymous users can get their first API key (bootstrap flow)
+        if (action === 'manage' && resourceType === 'api_keys') {
+          return next(); // Allow anonymous API key creation for bootstrap
+        }
+        
+        // Block all other actions for anonymous users
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required for this action',
+          anonymousLimit: true,
+          upgradeMessage: 'Sign up for full access',
+          allowedActions: ['Create timers', 'Get API key'],
+          signupUrl: 'https://github.com/Domusgpt/minoots-timer-system#getting-started'
+        });
+      }
+      
       // If RBAC not initialized, fall back to basic tier checking
       if (!req.rbac) {
         console.log('RBAC not initialized, using basic tier checking');
-        // For basic permissions, allow all authenticated users for now
+        // For basic permissions, allow all authenticated users
         return next();
       }
       

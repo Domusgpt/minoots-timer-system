@@ -46,9 +46,29 @@ async function createApiKey(userId, userEmail, userTier, name = 'Default Key') {
   await db.collection('apiKeys').doc(apiKey).set(keyData);
   
   // Add key reference to user document
-  await db.collection('users').doc(userId).update({
-    apiKeys: admin.firestore.FieldValue.arrayUnion(apiKey)
-  });
+  // Handle anonymous users who don't have documents yet
+  const userRef = db.collection('users').doc(userId);
+  const userDoc = await userRef.get();
+  
+  if (!userDoc.exists) {
+    // Create minimal user document for anonymous/bootstrap users
+    await userRef.set({
+      id: userId,
+      email: userEmail,
+      tier: userTier,
+      isAnonymous: userId.startsWith('anon_'),
+      apiKeys: [apiKey],
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      role: 'user',
+      permissions: [],
+      organizations: []
+    });
+  } else {
+    // Normal update for existing users
+    await userRef.update({
+      apiKeys: admin.firestore.FieldValue.arrayUnion(apiKey)
+    });
+  }
   
   return {
     apiKey: apiKey,

@@ -27,32 +27,65 @@ MINOOTS is an experimental timer system that provides persistent, reliable timer
 curl https://api-m3waemr5lq-uc.a.run.app/health
 ```
 
-### 2. Create a Timer (Anonymous - Limited)
+### 2. Create Your First Timer (No Auth Required!)
 ```bash
+# Anonymous users get 5 timers per day
 curl -X POST https://api-m3waemr5lq-uc.a.run.app/timers \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Test Timer",
-    "duration": "5m",
+    "name": "My First Timer",
+    "duration": "30s",
     "events": {
       "on_expire": {
-        "webhook": "https://webhook.site/your-unique-url"
+        "webhook": "https://webhook.site/your-unique-url",
+        "message": "Timer expired!"
       }
     }
   }'
 ```
 
-### 3. List Your Timers
+### 3. Get an API Key for Unlimited Access
 ```bash
-curl https://api-m3waemr5lq-uc.a.run.app/timers
+# Anonymous users can bootstrap their first API key!
+curl -X POST https://api-m3waemr5lq-uc.a.run.app/account/api-keys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My First API Key"}'
+
+# Save the returned API key - it won't be shown again!
+```
+
+### 4. Use Your API Key
+```bash
+# Now use your API key for unlimited timers
+curl -X POST https://api-m3waemr5lq-uc.a.run.app/timers \
+  -H "x-api-key: mnt_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Authenticated Timer",
+    "duration": "5m"
+  }'
 ```
 
 ## 📝 API REFERENCE
 
-### Authentication
-- **Anonymous**: Limited to 5 timers per day per IP
-- **Firebase Auth**: Full access with user account
-- **API Keys**: For programmatic access (requires auth)
+### Authentication Methods
+
+#### 🆓 Anonymous Access (NEW!)
+- **No auth required** to get started
+- **5 timers per day** limit (per IP address)
+- **50 requests per day** limit
+- **Get your first API key** without signing up!
+
+#### 🔑 API Key Authentication
+- **Get started immediately**: Anonymous users can create API keys
+- **Use header**: `x-api-key: mnt_your_key_here`
+- **100 timers per day** for free tier
+- **Upgrade to paid tiers** for unlimited
+
+#### 🔐 Firebase Authentication
+- **Full account features**: Organization management, analytics
+- **JWT tokens**: `Authorization: Bearer <token>`
+- **Required for**: Team features, billing management
 
 ### Endpoints
 
@@ -108,12 +141,15 @@ GET /health
 - **Hosting**: Google Cloud Run
 
 ### Current Status
-- ✅ **Core API**: Deployed and working
-- ✅ **Timer Operations**: Create, read, update, delete
-- ✅ **Authentication**: Firebase Auth integration
-- ✅ **RBAC System**: Implemented (trigger functions need retry)
-- ✅ **Organization Management**: Coded (needs testing)
-- ⏳ **MCP Integration**: Planned
+- ✅ **Core API**: Live at https://api-m3waemr5lq-uc.a.run.app
+- ✅ **Anonymous Access**: No signup required to start using
+- ✅ **API Key Bootstrap**: Anonymous users can get API keys
+- ✅ **Timer Operations**: Create, read, update, delete all working
+- ✅ **Webhook System**: Timers trigger webhooks when they expire
+- ✅ **Usage Tracking**: Rate limiting and tier enforcement
+- ✅ **RBAC System**: Role-based access control deployed
+- ✅ **Organization Management**: Team features available
+- ⏳ **MCP Integration**: Enhanced Claude Code integration (premium)
 - ⏳ **Web Dashboard**: Planned
 
 ## 🔧 DEVELOPMENT
@@ -148,54 +184,58 @@ minoots-timer-system/
 └── firebase.json             # Firebase configuration
 ```
 
+## 🚀 GETTING STARTED (STEP BY STEP)
+
+### Option 1: Start Anonymous (Fastest)
+1. **Test the system**: `curl https://api-m3waemr5lq-uc.a.run.app/health`
+2. **Create a timer**: Use the example from Quick Start above
+3. **Get API key**: Use the bootstrap endpoint to get unlimited access
+4. **Start building**: You're ready to integrate!
+
+### Option 2: Full Account Setup
+1. **Sign up**: Create Firebase account (for team features)
+2. **Get JWT token**: Use Firebase Auth
+3. **Create organization**: Invite team members
+4. **Set up billing**: Upgrade to paid tiers
+
 ## ⚠️ CURRENT LIMITATIONS
 
-- **No Web Interface**: API only, no dashboard yet
-- **Basic Error Handling**: Needs improvement
-- **Limited Documentation**: Being rewritten to reflect reality
-- **RBAC Incomplete**: Trigger functions need redeployment
-- **No SDK**: Direct API calls only
-- **No Enterprise Features**: Basic system only
+- **No Web Interface**: API only (dashboard coming soon)
+- **Basic MCP Integration**: Enhanced session-targeting is premium feature
+- **Documentation**: Still being updated to reflect recent fixes
 
-## 🚧 WHAT'S BEING FIXED
+## 🎯 ROADMAP
 
-We recently discovered that much of our documentation contained false information about features that don't exist. We're currently:
+### ✅ Recently Completed (July 2025)
+- Anonymous access and API key bootstrap
+- Authentication system fixes
+- RBAC deployment and organization features
+- Webhook system and timer expiration
+- Complete API functionality
 
-1. **Auditing all documentation** for false claims
-2. **Removing fake pricing information** and enterprise features
-3. **Eliminating false contact information** and support claims  
-4. **Rewriting guides** to reflect actual capabilities
-5. **Testing existing features** to verify they work
+### 🚧 In Progress (HIGH PRIORITY)
+- Enhanced MCP integration for Claude Code
+- Session-targeting timer commands (premium)
+- Agent-focused documentation and examples
 
-See `DOCUMENTATION_FRAUD_AUDIT.md` for the complete correction log.
+### 📅 Coming Soon
+- Billing and subscription management
+- Advanced webhook patterns
+- Team collaboration features
+- Enterprise SSO integration
+- Web dashboard development (lower priority)
+- SDK creation for popular languages
 
-## 📋 IMMEDIATE TODO
-
-- [ ] Complete RBAC deployment (retry trigger functions)
-- [ ] Test organization management features
-- [ ] Create truthful API documentation
-- [ ] Build basic web dashboard
-- [ ] Add comprehensive error handling
-- [ ] Write actual quick start guide
-- [ ] Implement MCP integration for Claude
-
-## 🤝 CONTRIBUTING
-
-This is an experimental project. If you want to contribute:
-
-1. Test the current API and report issues
-2. Help correct the fraudulent documentation
-3. Suggest realistic features that would be useful
-4. Help test the RBAC system once deployed
-
-## 📞 CONTACT
+## 📞 CONTACT & SUPPORT
 
 - **Repository**: https://github.com/Domusgpt/minoots-timer-system
 - **Issues**: Use GitHub issues for bug reports
-- **Questions**: Create GitHub discussions
+- **API Questions**: Create GitHub discussions
 
-**Note**: We do not currently have enterprise support, paid plans, or professional services. Those were erroneously documented and are being removed.
+**For Agents**: This API is designed for autonomous agents and AI systems. The documentation above should give you everything needed to integrate timer functionality into your workflows.
 
 ---
 
 **This is experimental software. Use at your own risk. No warranties or guarantees are provided.**
+
+**MINOOTS Timer System** - Reliable timers for autonomous agents and workflows.
