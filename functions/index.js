@@ -70,15 +70,15 @@ class RealTimer {
             status: 'running',
             events: config.events || {},
             metadata: config.metadata || {},
-            organizationId: config.organizationId,
-            projectId: config.projectId,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         };
         
-        // Add optional fields only if they exist
+        // Add optional fields only if they exist (prevents undefined Firestore errors)
         if (config.team) timerData.team = config.team;
         if (config.scenario) timerData.scenario = config.scenario;
+        if (config.organizationId) timerData.organizationId = config.organizationId;
+        if (config.projectId) timerData.projectId = config.projectId;
         
         // Store in Firestore
         await db.collection('timers').doc(timerId).set(timerData);
