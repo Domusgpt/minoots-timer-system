@@ -16,21 +16,16 @@ const { createCheckoutSession, handleSubscriptionCreated, handleSubscriptionCanc
 let db;
 
 onInit(async () => {
-  // Initialize Firebase Admin only if not already initialized
+  // MINIMAL initialization only - defer everything else to first request
   if (!admin.apps.length) {
     admin.initializeApp();
   }
   
   db = admin.firestore();
-  // Set db reference for auth middleware
   setDb(db);
-  
-  // Initialize RBAC system - defer heavy initialization
-  const CustomClaimsManager = require('./rbac-system/core/CustomClaimsManager');
-  global.rbacClaimsManager = new CustomClaimsManager(db);
   global.rbacDb = db;
   
-  console.log('MINOOTS RBAC system initialized successfully');
+  console.log('MINOOTS core initialized - RBAC will initialize on first use');
 });
 
 const app = express();

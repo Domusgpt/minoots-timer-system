@@ -25,9 +25,17 @@ const authenticateUser = async (req, res, next) => {
     db = admin.firestore();
   }
   
-  // Initialize RBAC claims manager (lazy loading)
-  if (!claimsManager && global.rbacClaimsManager) {
-    const { RoleManager } = require('../rbac-system/core/RoleDefinitions');
+  // Initialize RBAC claims manager (lazy loading - only when needed)
+  if (!claimsManager && !global.rbacClaimsManager) {
+    try {
+      const CustomClaimsManager = require('../rbac-system/core/CustomClaimsManager');
+      global.rbacClaimsManager = new CustomClaimsManager(global.rbacDb);
+      claimsManager = global.rbacClaimsManager;
+      console.log('RBAC claims manager lazy-initialized on first request');
+    } catch (error) {
+      console.warn('Could not lazy-initialize RBAC:', error.message);
+    }
+  } else if (!claimsManager && global.rbacClaimsManager) {
     claimsManager = global.rbacClaimsManager;
   }
 
