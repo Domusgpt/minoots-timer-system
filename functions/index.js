@@ -1161,13 +1161,19 @@ app.post('/manual-expire-timers', async (req, res) => {
         console.log('Manual timer expiration triggered...');
         
         const now = Date.now();
-        const expiredQuery = await db.collection('timers')
+        // Get all running timers first, then filter by endTime in memory (avoids composite index)
+        const runningTimersQuery = await db.collection('timers')
             .where('status', '==', 'running')
-            .where('endTime', '<=', now)
             .get();
         
+        // Filter expired timers in memory
+        const expiredDocs = runningTimersQuery.docs.filter(doc => {
+            const data = doc.data();
+            return data.endTime <= now;
+        });
+        
         const expiredTimers = [];
-        const promises = expiredQuery.docs.map(async doc => {
+        const promises = expiredDocs.map(async doc => {
             const timer = await RealTimer.expire(doc.id);
             expiredTimers.push({
                 id: doc.id,
@@ -1203,12 +1209,18 @@ exports.checkExpiredTimers = onSchedule('every 1 minutes', async (event) => {
         console.log('Checking for expired timers...');
         
         const now = Date.now();
-        const expiredQuery = await db.collection('timers')
+        // Get all running timers first, then filter by endTime in memory (avoids composite index)
+        const runningTimersQuery = await db.collection('timers')
             .where('status', '==', 'running')
-            .where('endTime', '<=', now)
             .get();
         
-        const promises = expiredQuery.docs.map(doc => 
+        // Filter expired timers in memory
+        const expiredDocs = runningTimersQuery.docs.filter(doc => {
+            const data = doc.data();
+            return data.endTime <= now;
+        });
+        
+        const promises = expiredDocs.map(doc => 
             RealTimer.expire(doc.id)
         );
         
