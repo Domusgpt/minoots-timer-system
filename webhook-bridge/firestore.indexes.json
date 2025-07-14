@@ -1,0 +1,19 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "pending",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "executed",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "received_timestamp",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
