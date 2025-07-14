@@ -105,38 +105,53 @@ const dynamicRateLimiter = (req, res, next) => {
 };
 
 /**
- * Special rate limiter for expensive operations
- * More restrictive limits for operations like timer creation
+ * Special rate limiters for expensive operations (timer creation)
+ * FIXED: Pre-created limiters for each tier to avoid dynamic max() functions
  */
-const expensiveOperationLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: (req) => {
-    // Dynamic limits based on tier
-    const limits = {
-      free: 2,    // 2 timer creations per minute
-      pro: 20,    // 20 timer creations per minute
-      team: 50,   // 50 timer creations per minute
-      enterprise: 100 // 100 timer creations per minute
-    };
-    return limits[req.user?.tier || 'free'];
-  },
-  message: {
-    success: false,
-    error: 'Too many timer creation requests. Please wait before creating more timers.'
-  },
-  keyGenerator: (req) => {
-    if (req.user?.id) {
-      return `expensive_${req.user.id}`;
+const expensiveLimits = {
+  free: 2,        // 2 timer creations per minute
+  pro: 20,        // 20 timer creations per minute
+  team: 50,       // 50 timer creations per minute
+  enterprise: 100 // 100 timer creations per minute
+};
+
+const expensiveLimiters = {};
+
+// Create rate limiters for each tier at module initialization
+Object.keys(expensiveLimits).forEach(tier => {
+  expensiveLimiters[tier] = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: expensiveLimits[tier],
+    message: {
+      success: false,
+      error: `Too many timer creation requests (${expensiveLimits[tier]}/minute). Please wait before creating more timers.`,
+      tier: tier,
+      limit: expensiveLimits[tier]
+    },
+    keyGenerator: (req) => {
+      if (req.user?.id) {
+        return `expensive_${req.user.id}`;
+      }
+      // Fix for Firebase Functions IP detection
+      const clientIP = req.ip || 
+                      req.connection?.remoteAddress || 
+                      req.socket?.remoteAddress ||
+                      req.headers['x-forwarded-for']?.split(',')[0] ||
+                      'unknown-ip';
+      return `expensive_${clientIP}`;
     }
-    // Fix for Firebase Functions IP detection
-    const clientIP = req.ip || 
-                    req.connection?.remoteAddress || 
-                    req.socket?.remoteAddress ||
-                    req.headers['x-forwarded-for']?.split(',')[0] ||
-                    'unknown-ip';
-    return `expensive_${clientIP}`;
-  }
+  });
 });
+
+/**
+ * Dynamic expensive operation limiter middleware
+ * FIXED: Uses pre-created limiters instead of dynamic max() function
+ */
+const expensiveOperationLimiter = (req, res, next) => {
+  const userTier = req.user?.tier || 'free';
+  const limiter = expensiveLimiters[userTier] || expensiveLimiters.free;
+  limiter(req, res, next);
+};
 
 module.exports = {
   dynamicRateLimiter,
