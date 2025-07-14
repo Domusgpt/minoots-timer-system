@@ -59,17 +59,27 @@ Object.keys(tierLimits).forEach(tier => {
       if (req.user?.id) {
         return `user_${req.user.id}`;
       }
-      // For unauthenticated requests, use IP
-      return req.ip || req.connection.remoteAddress;
+      // For unauthenticated requests, use IP (with fallback for Firebase Functions)
+      const clientIP = req.ip || 
+                      req.connection?.remoteAddress || 
+                      req.socket?.remoteAddress ||
+                      req.headers['x-forwarded-for']?.split(',')[0] ||
+                      'unknown-ip';
+      return `ip_${clientIP}`;
     },
     handler: (req, res) => {
+      // FIXED: Safe access to rateLimit properties for Firebase Functions
+      const retryAfter = req.rateLimit?.resetTime 
+        ? Math.round(req.rateLimit.resetTime / 1000)
+        : Math.round(config.windowMs / 1000);
+        
       res.status(429).json({
         success: false,
         error: config.message,
         tier: tier,
         limit: config.max,
         windowMs: config.windowMs,
-        retryAfter: Math.round(req.rateLimit.resetTime / 1000),
+        retryAfter: retryAfter,
         upgradeUrl: tier === 'free' ? 'https://github.com/Domusgpt/minoots-timer-system#pricing' : null
       });
     }
@@ -118,7 +128,13 @@ const expensiveOperationLimiter = rateLimit({
     if (req.user?.id) {
       return `expensive_${req.user.id}`;
     }
-    return `expensive_${req.ip}`;
+    // Fix for Firebase Functions IP detection
+    const clientIP = req.ip || 
+                    req.connection?.remoteAddress || 
+                    req.socket?.remoteAddress ||
+                    req.headers['x-forwarded-for']?.split(',')[0] ||
+                    'unknown-ip';
+    return `expensive_${clientIP}`;
   }
 });
 
