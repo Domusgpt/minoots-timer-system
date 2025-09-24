@@ -1,0 +1,171 @@
+syntax = "proto3";
+
+package minoots.timer.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// Schedules a timer inside the horology kernel. Either duration_ms or fire_time must be provided.
+message TimerScheduleRequest {
+  string tenant_id = 1;
+  string requested_by = 2;
+  string name = 3;
+  uint64 duration_ms = 4;
+  google.protobuf.Timestamp fire_time = 5;
+  TimerActionBundle action_bundle = 6;
+  map<string, string> labels = 7;
+  google.protobuf.Struct metadata = 8;
+  AgentCommandBinding agent_binding = 9;
+  string client_timer_id = 10;
+}
+
+message TimerScheduleResponse {
+  Timer timer = 1;
+}
+
+message Timer {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string requested_by = 4;
+  TimerStatus status = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp fire_at = 7;
+  google.protobuf.Timestamp fired_at = 8;
+  google.protobuf.Timestamp cancelled_at = 9;
+  string cancel_reason = 10;
+  string cancelled_by = 11;
+  uint64 duration_ms = 12;
+  google.protobuf.Struct metadata = 13;
+  map<string, string> labels = 14;
+  TimerActionBundle action_bundle = 15;
+  AgentCommandBinding agent_binding = 16;
+}
+
+enum TimerStatus {
+  TIMER_STATUS_UNSPECIFIED = 0;
+  TIMER_STATUS_SCHEDULED = 1;
+  TIMER_STATUS_ARMED = 2;
+  TIMER_STATUS_FIRED = 3;
+  TIMER_STATUS_CANCELLED = 4;
+  TIMER_STATUS_FAILED = 5;
+}
+
+message TimerCancelRequest {
+  string tenant_id = 1;
+  string timer_id = 2;
+  string reason = 3;
+  string cancelled_by = 4;
+}
+
+message TimerGetRequest {
+  string tenant_id = 1;
+  string timer_id = 2;
+}
+
+message TimerListRequest {
+  string tenant_id = 1;
+  uint32 page_size = 2;
+  string page_token = 3;
+  repeated string statuses = 4;
+}
+
+message TimerListResponse {
+  repeated Timer timers = 1;
+  string next_page_token = 2;
+}
+
+message TimerEventStreamRequest {
+  string tenant_id = 1;
+  repeated string topics = 2; // e.g., "timer.fired", "timer.failed"
+}
+
+message TimerEvent {
+  oneof event {
+    TimerScheduled scheduled = 1;
+    TimerArmed armed = 2;
+    TimerFired fired = 3;
+    TimerCancelled cancelled = 4;
+    TimerFailed failed = 5;
+  }
+}
+
+message TimerScheduled {
+  Timer timer = 1;
+}
+
+message TimerArmed {
+  Timer timer = 1;
+}
+
+message TimerFired {
+  Timer timer = 1;
+  ExecutionResult result = 2;
+}
+
+message TimerCancelled {
+  Timer timer = 1;
+  string reason = 2;
+}
+
+message TimerFailed {
+  Timer timer = 1;
+  ExecutionError error = 2;
+}
+
+message ExecutionResult {
+  repeated ActionResult actions = 1;
+  google.protobuf.Timestamp completed_at = 2;
+}
+
+message ExecutionError {
+  string message = 1;
+  string code = 2;
+  google.protobuf.Struct metadata = 3;
+}
+
+message ActionResult {
+  string action_id = 1;
+  bool success = 2;
+  string output = 3;
+  google.protobuf.Struct metadata = 4;
+}
+
+message TimerActionBundle {
+  repeated TimerAction actions = 1;
+  uint32 concurrency = 2;
+  RetryPolicy retry_policy = 3;
+}
+
+message TimerAction {
+  string id = 1;
+  string kind = 2; // webhook, command, agent_prompt, workflow_event
+  google.protobuf.Struct parameters = 3;
+  Escalation escalation = 4;
+}
+
+message RetryPolicy {
+  uint32 max_attempts = 1;
+  uint64 backoff_initial_ms = 2;
+  double backoff_multiplier = 3;
+}
+
+message Escalation {
+  uint32 after_attempts = 1;
+  TimerAction escalates_to = 2;
+}
+
+message AgentCommandBinding {
+  string adapter = 1; // e.g. "mcp", "langchain", "autogen"
+  string target = 2;  // agent id, swarm id, or integration name
+  google.protobuf.Struct payload_template = 3;
+  uint64 acknowledgement_timeout_ms = 4;
+}
+
+service HorologyKernel {
+  rpc ScheduleTimer (TimerScheduleRequest) returns (TimerScheduleResponse);
+  rpc CancelTimer (TimerCancelRequest) returns (Timer);
+  rpc GetTimer (TimerGetRequest) returns (Timer);
+  rpc ListTimers (TimerListRequest) returns (TimerListResponse);
+  rpc StreamTimerEvents (TimerEventStreamRequest) returns (stream TimerEvent);
+}
