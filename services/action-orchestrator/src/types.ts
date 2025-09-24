@@ -3,7 +3,11 @@ export type ActionKind = 'webhook' | 'command' | 'agent_prompt' | 'workflow_even
 export interface TimerAction {
   id: string;
   kind: ActionKind;
-  parameters: Record<string, unknown>;
+  parameters?: Record<string, unknown>;
+  escalation?: {
+    afterAttempts?: number;
+    escalatesTo?: TimerAction;
+  };
 }
 
 export interface TimerInstance {
@@ -11,7 +15,7 @@ export interface TimerInstance {
   tenantId: string;
   name: string;
   requestedBy: string;
-  status: 'scheduled' | 'armed' | 'fired' | 'cancelled';
+  status: 'scheduled' | 'armed' | 'fired' | 'cancelled' | 'failed';
   fireAt: string;
   createdAt: string;
   durationMs: number;
@@ -20,11 +24,22 @@ export interface TimerInstance {
   actionBundle?: {
     actions: TimerAction[];
     concurrency?: number;
-  };
+    retryPolicy?: {
+      maxAttempts: number;
+      backoffInitialMs: number;
+      backoffMultiplier: number;
+    };
+  }; 
   firedAt?: string;
   cancelledAt?: string;
   cancelReason?: string;
   cancelledBy?: string;
+  agentBinding?: {
+    adapter: string;
+    target: string;
+    payloadTemplate: Record<string, unknown>;
+    acknowledgementTimeoutMs: number;
+  };
 }
 
 export type TimerEvent =

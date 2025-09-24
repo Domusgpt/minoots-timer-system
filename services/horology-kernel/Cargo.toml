@@ -16,6 +16,15 @@ tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "time", "sy
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 uuid = { version = "1.7", features = ["v4", "serde"] }
+tonic = { version = "0.10", features = ["transport"] }
+prost = "0.12"
+prost-types = "0.12"
+tokio-stream = { version = "0.1", features = ["sync", "net"] }
+async-stream = "0.3"
+futures-core = "0.3"
+anyhow = "1.0"
 
 [dev-dependencies]
-anyhow = "1.0"
+
+[build-dependencies]
+tonic-build = "0.10"

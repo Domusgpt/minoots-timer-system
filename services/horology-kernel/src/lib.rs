@@ -28,7 +28,7 @@ pub enum KernelError {
     InvalidFireTime,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum TimerStatus {
     Scheduled,
@@ -85,6 +85,23 @@ pub enum TimerEvent {
         timer: TimerInstance,
         reason: Option<String>,
     },
+}
+
+impl TimerEvent {
+    pub fn tenant_id(&self) -> &str {
+        match self {
+            TimerEvent::Scheduled(timer) | TimerEvent::Fired(timer) => &timer.tenant_id,
+            TimerEvent::Cancelled { timer, .. } => &timer.tenant_id,
+        }
+    }
+
+    pub fn topic(&self) -> &'static str {
+        match self {
+            TimerEvent::Scheduled(_) => "timer.scheduled",
+            TimerEvent::Fired(_) => "timer.fired",
+            TimerEvent::Cancelled { .. } => "timer.cancelled",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -256,6 +273,8 @@ impl HorologyKernel {
         );
     }
 }
+
+pub mod rpc;
 
 #[cfg(test)]
 mod tests {

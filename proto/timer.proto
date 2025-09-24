@@ -29,11 +29,16 @@ message Timer {
   TimerStatus status = 4;
   google.protobuf.Timestamp created_at = 5;
   google.protobuf.Timestamp fire_at = 6;
-  google.protobuf.Timestamp completed_at = 7;
+  google.protobuf.Timestamp fired_at = 7;
   uint64 duration_ms = 8;
   google.protobuf.Struct metadata = 9;
   TimerActionBundle action_bundle = 10;
   AgentCommandBinding agent_binding = 11;
+  string requested_by = 12;
+  map<string, string> labels = 13;
+  google.protobuf.Timestamp cancelled_at = 14;
+  string cancel_reason = 15;
+  string cancelled_by = 16;
 }
 
 enum TimerStatus {
@@ -49,6 +54,7 @@ message TimerCancelRequest {
   string tenant_id = 1;
   string timer_id = 2;
   string reason = 3;
+  string requested_by = 4;
 }
 
 message TimerGetRequest {
@@ -99,6 +105,7 @@ message TimerFired {
 message TimerCancelled {
   Timer timer = 1;
   string reason = 2;
+  string cancelled_by = 3;
 }
 
 message TimerFailed {

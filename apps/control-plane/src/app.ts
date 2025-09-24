@@ -1,6 +1,7 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
 import { registerTimerRoutes } from './routes/timerRoutes';
 import { TimerService } from './services/timerService';
+import { GrpcKernelGateway } from './services/grpcKernelGateway';
 import { InMemoryTimerRepository } from './store/inMemoryTimerRepository';
 import { logger } from './telemetry/logger';
 
@@ -10,7 +11,9 @@ export const createServer = (): Application => {
   app.use(express.json({ limit: '1mb' }));
 
   const timerRepository = new InMemoryTimerRepository();
-  const timerService = new TimerService(timerRepository);
+  const kernelAddress = process.env.KERNEL_GRPC_URL ?? 'localhost:50051';
+  const kernelGateway = new GrpcKernelGateway(kernelAddress);
+  const timerService = new TimerService(timerRepository, kernelGateway);
 
   app.get('/healthz', (_req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'minoots-control-plane' });

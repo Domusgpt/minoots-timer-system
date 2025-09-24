@@ -17,20 +17,20 @@ it locally, and lays out the phased backlog that the team can execute immediatel
 ## 2. Workstream Map
 | Plane | Owner Skills | Core Repositories | Immediate Focus |
 | --- | --- | --- | --- |
-| Control Plane (TypeScript/Node) | API, auth, product engineers | `apps/control-plane` | CRUD timers, validation, policy hooks, REST + future gRPC gateway |
-| Horology Kernel (Rust) | Systems, distributed systems | `services/horology-kernel` | In-memory scheduler, event stream, persistence adapters |
-| Event Fabric & Orchestrators (TypeScript) | Integrations, reliability | `services/action-orchestrator` | NATS topic listeners, action runners, retries |
+| Control Plane (TypeScript/Node) | API, auth, product engineers | `apps/control-plane` | CRUD timers, validation, policy hooks, Postgres adapter, SDKs |
+| Horology Kernel (Rust) | Systems, distributed systems | `services/horology-kernel` | gRPC service hardening, persistence adapters, failover |
+| Event Fabric & Orchestrators (TypeScript) | Integrations, reliability | `services/action-orchestrator` | gRPC streaming, retries, managed event fabrics |
 | Shared Contracts | Polyglot | `proto/`, `docs/` | Timer protobuf, JSON schemas, test harness |
 | Client Surfaces | SDK & DX engineers | `sdk/`, future `apps/dashboard` | CLI/MCP integrations, telemetry |
 
 ## 3. Sprint 0 (Foundations) Deliverables
 The repository now contains the baseline code required to launch the platform locally:
-- **Control Plane service** (`apps/control-plane`) with Express + Zod validation, a timer service layer, and an in-memory
-  repository ready to swap for Postgres.
-- **Horology Kernel crate** (`services/horology-kernel`) implementing an async scheduler with Tokio, broadcast timer events, and
-  cancellation semantics.
-- **Action Orchestrator service** (`services/action-orchestrator`) that listens to timer events, performs HTTP/webhook actions,
-  and records execution traces.
+- **Control Plane service** (`apps/control-plane`) with Express + Zod validation, a timer service layer, and a gRPC gateway into
+  the kernel (backed by an in-memory repository that can be swapped for Postgres).
+- **Horology Kernel crate** (`services/horology-kernel`) implementing an async scheduler with Tokio, a gRPC API surface,
+  broadcast timer events, and cancellation semantics.
+- **Action Orchestrator service** (`services/action-orchestrator`) that listens to kernel events over gRPC/NATS/STDIN, performs
+  HTTP/webhook actions, and records execution traces.
 - **Shared protobuf** (`proto/timer.proto`) describing the kernel RPC surface and event envelopes.
 
 Each of these deliverables includes inline documentation and starter scripts so that contributors can run them immediately.
@@ -51,12 +51,13 @@ Each of these deliverables includes inline documentation and starter scripts so 
    - `cd services/action-orchestrator && npm install`
    - `cd services/horology-kernel && cargo build`
 3. **Run the stack locally**
-   - Control plane: `npm run dev` inside `apps/control-plane` (listens on `localhost:4000`).
-   - Horology kernel: `cargo run --bin kernel` (spawns scheduler and exposes gRPC/TCP placeholder).
-   - Action orchestrator: `npm run dev` inside `services/action-orchestrator` (subscribes to local NATS or in-process queue).
-   - Use the CLI (`independent-timer.js`) or HTTP calls to create timers and observe events flowing through the services.
-4. **Testing cadence** – Each service ships its own unit tests (`npm test` / `cargo test`). Scenario tests in `tests/` will evolve
-   to orchestrate the full workflow once persistence is wired up.
+   - Horology kernel: `cargo run --bin kernel` (listens on `0.0.0.0:50051` by default).
+   - Control plane: `KERNEL_GRPC_URL=localhost:50051 npm run dev` inside `apps/control-plane` (REST API on `localhost:4000`).
+   - Action orchestrator: `KERNEL_GRPC_URL=localhost:50051 npm run dev` inside `services/action-orchestrator` (falls back to
+     NATS/STDIN when the kernel URL is not provided).
+   - Use HTTP calls (or the legacy CLI) to create timers and observe events flowing through the services.
+4. **Testing cadence** – Each service ships its own unit tests (`npm test` / `cargo test`). The kernel now includes an integration
+    test that covers schedule ➜ fire ➜ cancel via gRPC and will be extended into cross-service scenarios once persistence lands.
 
 ## 6. Contribution Expectations
 - **Contracts first** – Update `proto/timer.proto` and any JSON schemas before shipping behavior changes. Regenerate stubs in
@@ -67,10 +68,10 @@ Each of these deliverables includes inline documentation and starter scripts so 
   READMEs so downstream teams stay aligned.
 
 ## 7. Next Steps
-- Flesh out Postgres migrations and repository adapters in the control plane.
-- Implement persistence + replication modules in the horology kernel to store timer logs durably.
-- Connect the action orchestrator to managed NATS JetStream (or Kafka) and add templated agent bridge commands.
-- Publish updated SDKs that target the new control plane endpoints and event stream, replacing direct file-system timers.
+- Flesh out Postgres migrations and repository adapters in the control plane so the kernel can persist timer metadata durably.
+- Implement kernel persistence + replication to back the gRPC API with resilient storage and replay.
+- Harden the event fabric with managed NATS JetStream/Kafka integrations and retries.
+- Publish updated SDKs/agent adapters that target the new control plane + gRPC pipeline, replacing the legacy file-system timers.
 
 This track ensures the architecture ships as a cohesive product rather than a static plan—giving agents, users, and developers
 an immediately useful foundation to build on.

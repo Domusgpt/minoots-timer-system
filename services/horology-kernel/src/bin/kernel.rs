@@ -1,7 +1,9 @@
-use horology_kernel::{HorologyKernel, SchedulerConfig, TimerSpec};
+use horology_kernel::{rpc::KernelService, HorologyKernel, SchedulerConfig, TimerSpec};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use tokio::signal;
-use tracing::info;
+use tonic::transport::Server;
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -29,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     }
 
-    let kernel_task = tokio::spawn(async move {
+    let log_task = tokio::spawn(async move {
         loop {
             match events.recv().await {
                 Ok(event) => info!(?event, "timer event"),
@@ -41,8 +43,23 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    signal::ctrl_c().await?;
+    let addr: SocketAddr = std::env::var("KERNEL_BIND_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
+        .parse()?;
+
+    info!(%addr, "Starting gRPC server for horology kernel");
+
+    Server::builder()
+        .add_service(KernelService::new(kernel.clone()).into_server())
+        .serve_with_shutdown(addr, async {
+            if let Err(error) = signal::ctrl_c().await {
+                error!(?error, "Failed waiting for shutdown signal");
+            }
+            info!("Shutdown signal received");
+        })
+        .await?;
+
     info!("Shutting down horology kernel");
-    kernel_task.abort();
+    log_task.abort();
     Ok(())
 }

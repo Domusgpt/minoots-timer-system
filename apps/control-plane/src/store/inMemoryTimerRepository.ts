@@ -40,6 +40,14 @@ export class InMemoryTimerRepository implements TimerRepository {
       .sort((a, b) => a.fireAt.localeCompare(b.fireAt));
   }
 
+  async replaceAll(tenantId: string, timers: TimerRecord[]): Promise<void> {
+    const tenantStore = this.ensureTenant(tenantId);
+    tenantStore.clear();
+    timers.forEach((timer) => {
+      tenantStore.set(timer.id, clone(timer));
+    });
+  }
+
   private ensureTenant(tenantId: string): Map<string, TimerRecord> {
     if (!this.store.has(tenantId)) {
       this.store.set(tenantId, new Map());

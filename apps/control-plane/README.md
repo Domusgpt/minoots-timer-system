@@ -6,7 +6,7 @@ SDKs, and human operators to manage timers that will be executed by the horology
 ## Features
 - Validates timer definitions with Zod schemas and normalizes durations.
 - Persists timer metadata using a repository abstraction (currently an in-memory store).
-- Emits timer lifecycle commands to the horology kernel through a pluggable gateway.
+- Emits timer lifecycle commands to the horology kernel through a gRPC gateway.
 - Provides tenant-aware APIs suitable for multi-tenant and swarm workloads.
 
 ## Endpoints
@@ -34,8 +34,16 @@ curl -X POST http://localhost:4000/timers \
 ```bash
 cd apps/control-plane
 npm install
-npm run dev
+KERNEL_GRPC_URL=localhost:50051 npm run dev
 ```
 
-The dev server runs on port `4000`. Update `services/timerService.ts` to swap the in-memory repository for a Postgres adapter
-and the `KernelGateway` to invoke the Rust horology kernel via gRPC once it is available.
+The dev server runs on port `4000` and requires a running horology kernel gRPC server (see `services/horology-kernel`).
+
+### Configuration
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `KERNEL_GRPC_URL` | `localhost:50051` | Address of the horology kernel gRPC endpoint. |
+
+The in-memory repository remains available for caching and local smoke tests. Swap it for a persistent adapter (Postgres,
+DynamoDB, etc.) once durability requirements are in scope.

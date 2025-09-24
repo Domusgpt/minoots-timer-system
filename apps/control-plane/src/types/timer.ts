@@ -1,16 +1,28 @@
 import { z } from 'zod';
 
-export const timerActionSchema = z.object({
-  id: z.string().min(1),
-  kind: z.enum(['webhook', 'command', 'agent_prompt', 'workflow_event']),
-  parameters: z.record(z.any()).default({}),
-  escalation: z
-    .object({
-      afterAttempts: z.number().int().positive().default(1),
-      escalatesTo: z.lazy(() => timerActionSchema).optional(),
-    })
-    .optional(),
-});
+interface TimerActionModel {
+  id: string;
+  kind: 'webhook' | 'command' | 'agent_prompt' | 'workflow_event';
+  parameters?: Record<string, unknown>;
+  escalation?: {
+    afterAttempts?: number;
+    escalatesTo?: TimerActionModel;
+  };
+}
+
+export const timerActionSchema: z.ZodType<TimerActionModel> = z.lazy(() =>
+  z.object({
+    id: z.string().min(1),
+    kind: z.enum(['webhook', 'command', 'agent_prompt', 'workflow_event']),
+    parameters: z.record(z.any()).default({}),
+    escalation: z
+      .object({
+        afterAttempts: z.number().int().positive().default(1),
+        escalatesTo: timerActionSchema.optional(),
+      })
+      .optional(),
+  }),
+);
 
 export const retryPolicySchema = z
   .object({
@@ -64,7 +76,7 @@ export type TimerAction = z.infer<typeof timerActionSchema>;
 export type TimerActionBundle = z.infer<typeof timerActionBundleSchema>;
 export type AgentBinding = z.infer<typeof agentBindingSchema>;
 
-export type TimerStatus = 'scheduled' | 'armed' | 'fired' | 'cancelled';
+export type TimerStatus = 'scheduled' | 'armed' | 'fired' | 'cancelled' | 'failed';
 
 export interface TimerRecord {
   id: string;
