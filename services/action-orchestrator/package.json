@@ -1,0 +1,25 @@
+{
+  "name": "@minoots/action-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Executes timer expirations by dispatching webhooks, commands, and agent messages",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.9.13",
+    "@grpc/proto-loader": "^0.7.10",
+    "axios": "^1.6.7",
+    "nats": "^2.16.0",
+    "pino": "^8.15.0",
+    "zod": "^3.22.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.28",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.2"
+  }
+}

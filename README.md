@@ -78,6 +78,33 @@ console.log(`${status.timeRemaining}ms remaining`);
 - Team collaboration and sharing
 - Enterprise authentication (SSO)
 
+## 🧱 Platform Foundations (Sprint 0)
+
+MINOOTS is evolving into the distributed horology platform described in `AGENTIC_TIMER_ARCHITECTURE.md`. This repository now
+contains runnable foundations for that architecture:
+
+| Component | Path | What ships now |
+| --- | --- | --- |
+| Control Plane service | `apps/control-plane` | Express + Zod API that normalizes timer requests and schedules them through the Rust kernel via gRPC |
+| Horology Kernel | `services/horology-kernel` | Rust scheduler exposing tonic gRPC endpoints, lifecycle events, and cancellation semantics |
+| Action Orchestrator | `services/action-orchestrator` | Timer event consumers with webhook + agent hooks fed by the kernel's gRPC stream or NATS |
+| Contracts & Dev Track | `proto/timer.proto`, `docs/DEVELOPMENT_TRACK.md` | gRPC definitions and the execution plan for landing the full platform |
+
+### Local development stack
+1. Install dependencies:
+   - `cd apps/control-plane && npm install`
+   - `cd services/action-orchestrator && npm install`
+   - `cd services/horology-kernel && cargo build`
+2. Run the services:
+   - Horology kernel gRPC server: `cargo run --bin kernel` (listens on `0.0.0.0:50051` by default, override with `KERNEL_GRPC_ADDR`)
+   - Control plane REST API: `npm run dev` (port 4000). Configure `KERNEL_GRPC_ADDR`/`KERNEL_PROTO_PATH` if the kernel runs elsewhere.
+   - Action orchestrator: `npm run dev` (consumes the kernel's gRPC stream by default, or NATS via `NATS_URL`).
+3. Use the existing CLI (`independent-timer.js`) or HTTP calls to interact with the control plane and watch timers propagate
+   through the kernel and orchestrator.
+
+See [`docs/DEVELOPMENT_TRACK.md`](docs/DEVELOPMENT_TRACK.md) for the detailed engineering track and next milestones. For a snapshot
+of current priorities and outstanding gaps, read [`docs/ENGINEERING_PRIORITIES.md`](docs/ENGINEERING_PRIORITIES.md).
+
 ## 📖 Documentation
 
 ### Basic Usage
