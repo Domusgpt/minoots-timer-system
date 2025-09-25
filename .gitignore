@@ -59,3 +59,12 @@ playwright-report/
 
 # TypeScript
 *.tsbuildinfo
+
+# Rust
+target/
+
+# Workspace packages
+apps/**/node_modules/
+services/**/node_modules/
+apps/**/dist/
+services/**/dist/

@@ -78,6 +78,51 @@ console.log(`${status.timeRemaining}ms remaining`);
 - Team collaboration and sharing
 - Enterprise authentication (SSO)
 
+## 🧱 Platform Foundations (Sprint 0)
+
+MINOOTS is evolving into the distributed horology platform described in `AGENTIC_TIMER_ARCHITECTURE.md`. This repository now
+contains runnable foundations for that architecture:
+
+| Component | Path | What ships now |
+| --- | --- | --- |
+| Control Plane service | `apps/control-plane` | Express + Zod API for creating/listing/cancelling timers with multi-tenant validation |
+| Horology Kernel | `services/horology-kernel` | Rust scheduler with Tokio-driven timers, broadcast event stream, and cancellation semantics |
+| Action Orchestrator | `services/action-orchestrator` | Timer event consumers that trigger webhooks and stubbed agent prompts |
+| Contracts & Dev Track | `proto/timer.proto`, `docs/DEVELOPMENT_TRACK.md` | gRPC definitions and the execution plan for landing the full platform |
+
+### Local development stack
+1. Install dependencies:
+   - `cd apps/control-plane && npm install`
+   - `cd services/action-orchestrator && npm install`
+   - `cd services/horology-kernel && cargo build`
+2. Run the services:
+   - Control plane REST API: `npm run dev` (port 4000)
+   - Horology kernel gRPC server: `cargo run --bin kernel` (set `KERNEL_GRPC_ADDR` to override the default `0.0.0.0:50051`)
+   - Action orchestrator: `npm run dev` (set `KERNEL_GRPC_URL` or fall back to `NATS_URL` / STDIN streaming)
+3. Export the shared configuration so every service resolves the same kernel endpoint:
+   ```bash
+   export KERNEL_GRPC_URL=localhost:50051
+   export KERNEL_GATEWAY_MODE=grpc           # control plane falls back to memory if the kernel is unavailable
+   export KERNEL_EVENT_TENANT_ID=__all__     # orchestrator can scope streams per tenant
+   ```
+4. Use the existing CLI (`independent-timer.js`) or HTTP calls to interact with the control plane and watch timers propagate
+   through the kernel and orchestrator.
+
+See [`docs/DEVELOPMENT_TRACK.md`](docs/DEVELOPMENT_TRACK.md) for the detailed engineering track and next milestones.
+
+### Service configuration contract
+
+| Variable | Default | Consumer(s) | Purpose |
+| --- | --- | --- | --- |
+| `KERNEL_GRPC_ADDR` | `0.0.0.0:50051` | Horology kernel | Binds the scheduler's gRPC listener (also read as `KERNEL_GRPC_URL` for backwards compatibility). |
+| `KERNEL_GRPC_URL` | `localhost:50051` | Control plane, Action orchestrator | Location of the kernel when acting as a client. |
+| `KERNEL_GATEWAY_MODE` | `grpc` | Control plane | Switches between the real kernel and the in-memory fallback (`memory`). |
+| `KERNEL_EVENT_TENANT_ID` | `__all__` | Action orchestrator | Restricts the gRPC event stream to a single tenant when desired. |
+
+All gRPC schedule/list/get/cancel calls now pass metadata, labels, action bundles, and agent bindings as canonical JSON strings.
+Clients are responsible for serializing structured payloads before sending requests and for parsing JSON when receiving timers
+or stream events.
+
 ## 📖 Documentation
 
 ### Basic Usage
