@@ -5,11 +5,16 @@ import { InMemoryTimerRepository } from './store/inMemoryTimerRepository';
 import { logger } from './telemetry/logger';
 import { GrpcKernelGateway } from './services/grpcKernelGateway';
 import { KernelGateway, NoopKernelGateway } from './services/kernelGateway';
+import { authenticateUser, rateLimitMiddleware } from './middleware/auth';
 
 export const createServer = (): Application => {
   const app = express();
 
   app.use(express.json({ limit: '1mb' }));
+
+  // Add authentication and rate limiting
+  app.use(authenticateUser);
+  app.use(rateLimitMiddleware);
 
   const timerRepository = new InMemoryTimerRepository();
   const kernelGateway: KernelGateway = process.env.KERNEL_GRPC_ADDRESS

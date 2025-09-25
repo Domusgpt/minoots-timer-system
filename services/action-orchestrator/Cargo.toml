@@ -1,0 +1,25 @@
+[package]
+name = "action-orchestrator"
+version = "0.1.0"
+edition = "2021"
+authors = ["MINOOTS Engineering"]
+description = "Action execution service for timer events"
+
+[dependencies]
+tokio = { version = "1.36", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.11", features = ["json"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+uuid = { version = "1.7", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+
+# gRPC dependencies to subscribe to kernel events
+tonic = "0.11"
+prost = "0.12"
+prost-types = "0.12"
+
+[build-dependencies]
+tonic-build = "0.11"

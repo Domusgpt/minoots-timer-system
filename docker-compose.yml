@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # Horology Kernel - Rust timer scheduler
+  horology-kernel:
+    build:
+      context: ./services/horology-kernel
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      - KERNEL_GRPC_ADDR=0.0.0.0:50051
+      - RUST_LOG=info
+      - MINOOTS_BOOT_DEMO=1
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Control Plane - TypeScript REST API
+  control-plane:
+    build:
+      context: ./apps/control-plane
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - KERNEL_GRPC_ADDRESS=horology-kernel:50051
+      - KERNEL_PROTO_PATH=/app/proto
+    depends_on:
+      horology-kernel:
+        condition: service_healthy
+    volumes:
+      - ./proto:/app/proto:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Action Orchestrator - Webhook execution
+  action-orchestrator:
+    build:
+      context: ./services/action-orchestrator
+      dockerfile: Dockerfile
+    environment:
+      - RUST_LOG=info
+      - KERNEL_GRPC_ADDRESS=horology-kernel:50051
+      - DEMO_MODE=1
+    depends_on:
+      horology-kernel:
+        condition: service_healthy
+
+  # Load balancer / reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - control-plane
+    restart: unless-stopped
+
+networks:
+  default:
+    name: minoots-network

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "minoots-timer-system": {
+      "command": "node",
+      "args": ["/path/to/minoots-timer-system/mcp/index.js"],
+      "env": {
+        "MINOOTS_API_BASE": "https://api-m3waemr5lq-uc.a.run.app"
+      }
+    }
+  }
+}
