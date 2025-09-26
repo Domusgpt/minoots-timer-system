@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { logger } from '../telemetry/logger';
@@ -11,15 +11,19 @@ interface PersistedStore {
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
+export type FileSystem = Pick<typeof fsPromises, 'readFile' | 'writeFile' | 'mkdir'>;
+
 export class FileTimerRepository implements TimerRepository {
   private readonly filePath: string;
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private readonly store = new Map<string, Map<string, TimerRecord>>();
   private writeLock: Promise<void> = Promise.resolve();
+  private readonly fs: FileSystem;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, fileSystem: FileSystem = fsPromises) {
     this.filePath = filePath;
+    this.fs = fileSystem;
   }
 
   async save(timer: TimerRecord): Promise<TimerRecord> {
@@ -83,7 +87,7 @@ export class FileTimerRepository implements TimerRepository {
 
   private async loadFromDisk(): Promise<void> {
     try {
-      const data = await fs.readFile(this.filePath, 'utf-8');
+      const data = await this.fs.readFile(this.filePath, 'utf-8');
       const parsed = JSON.parse(data) as PersistedStore;
       Object.entries(parsed.tenants ?? {}).forEach(([tenantId, timers]) => {
         const tenantStore = this.ensureTenant(tenantId);
@@ -112,13 +116,19 @@ export class FileTimerRepository implements TimerRepository {
     const payload: PersistedStore = { tenants: snapshot };
     const json = JSON.stringify(payload, null, 2);
 
-    this.writeLock = this.writeLock.then(async () => {
-      await fs.mkdir(dirname(this.filePath), { recursive: true });
-      await fs.writeFile(this.filePath, json, 'utf-8');
+    const writeTask = this.writeLock.then(async () => {
+      await this.fs.mkdir(dirname(this.filePath), { recursive: true });
+      await this.fs.writeFile(this.filePath, json, 'utf-8');
     });
 
+    // Ensure future writes are not blocked if this write fails.
+    this.writeLock = writeTask.then(
+      () => undefined,
+      () => undefined,
+    );
+
     try {
-      await this.writeLock;
+      await writeTask;
     } catch (error) {
       logger.error({ error }, 'Failed to persist timer store to disk');
       throw error;
