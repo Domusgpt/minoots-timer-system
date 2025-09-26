@@ -20,9 +20,30 @@ async fn main() -> anyhow::Result<()> {
 
     info!(%addr, "Starting horology kernel gRPC server");
 
-    let kernel = HorologyKernel::new(SchedulerConfig::default());
+    let kernel = if let Ok(path) = std::env::var("KERNEL_PERSIST_PATH") {
+        info!(path, "Loading kernel with persistence");
+        HorologyKernel::with_persistence(SchedulerConfig::default(), path).await?
+    } else {
+        HorologyKernel::new(SchedulerConfig::default())
+    };
     let mut events = kernel.subscribe();
     let grpc_service = GrpcKernelService::new(kernel.clone());
+
+    let nats_publisher = if let Ok(url) = std::env::var("NATS_URL") {
+        let subject = std::env::var("NATS_SUBJECT").unwrap_or_else(|_| "minoots.timer.events".to_string());
+        match async_nats::connect(url.clone()).await {
+            Ok(client) => {
+                info!(%url, subject, "Publishing timer events to NATS");
+                Some((client, subject))
+            }
+            Err(err) => {
+                warn!(%url, ?err, "Failed to connect to NATS");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     if std::env::var("MINOOTS_BOOT_DEMO").is_ok() {
         info!("Scheduling demo timer");
@@ -45,7 +66,19 @@ async fn main() -> anyhow::Result<()> {
     let event_task = tokio::spawn(async move {
         loop {
             match events.recv().await {
-                Ok(event) => info!(?event, "timer event"),
+                Ok(event) => {
+                    info!(?event, "timer event");
+                    if let Some((client, subject)) = &nats_publisher {
+                        match serde_json::to_vec(&event) {
+                            Ok(payload) => {
+                                if let Err(err) = client.publish(subject.clone(), payload.into()).await {
+                                    warn!(?err, "failed to publish timer event to NATS");
+                                }
+                            }
+                            Err(err) => warn!(?err, "failed to encode timer event for NATS"),
+                        }
+                    }
+                }
                 Err(err) => {
                     warn!(?err, "event channel closed");
                     break;

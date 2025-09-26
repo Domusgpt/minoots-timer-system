@@ -1,343 +1,139 @@
-# MINOOTS ⏱️🚀
+# MINOOTS ⏱️
 
-**Independent Timer System for Autonomous Agents & Enterprise Workflows**
+**Durable timer foundations for agentic and automation workloads**
 
-[![npm version](https://badge.fury.io/js/%40minoots%2Ftimer-system.svg)](https://badge.fury.io/js/%40minoots%2Ftimer-system)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://github.com/domusgpt/minoots-timer-system/workflows/Tests/badge.svg)](https://github.com/domusgpt/minoots-timer-system/actions)
-[![Coverage](https://codecov.io/gh/domusgpt/minoots-timer-system/branch/main/graph/badge.svg)](https://codecov.io/gh/domusgpt/minoots-timer-system)
+MINOOTS is an open prototype of a three-plane timer system: a REST control plane in
+TypeScript, a Rust horology kernel that manages timer lifecycles, and an action
+orchestrator that reacts to timer events. The current codebase is intentionally
+minimal—it is meant for experimentation, not production—but now includes
+persistence, gRPC wiring, and NATS-based event distribution so the full
+architecture can be exercised locally.
 
-## 🎯 What is MINOOTS?
+## 📦 What ships today
 
-MINOOTS is a production-ready timer system that runs **independently** of your main application. Perfect for:
-
-- 🤖 **AI Agents** that need persistent timers across sessions
-- 🔄 **Workflow Automation** with reliable scheduling
-- 🏢 **Enterprise Systems** requiring bulletproof timing
-- 🚀 **Background Jobs** that survive process crashes
-
-## 🚀 Quick Start
-
-```bash
-npm install -g @minoots/timer-system
-minoots create 30s "coffee_break"
-minoots list
-```
-
-```javascript
-const MINOOTS = require('@minoots/timer-system');
-
-// Create a timer that survives process crashes
-const timer = MINOOTS.create({
-  name: 'backup_database',
-  duration: '1h',
-  events: {
-    on_expire: {
-      webhook: 'https://api.example.com/backup-complete',
-      message: 'Database backup completed'
-    }
-  }
-});
-
-console.log(`Timer ${timer.id} will execute in 1 hour`);
-```
-
-## ✨ Key Features
-
-### 🛡️ Independent Execution
-- Timers run in separate processes
-- Survive main application crashes
-- Continue running across system reboots
-- No dependency on parent process lifecycle
-
-### 🔧 Powerful Events
-```javascript
-{
-  events: {
-    on_expire: {
-      webhook: 'https://api.example.com/notify',
-      file_write: { file: 'result.txt', content: 'Timer done!' },
-      command: 'npm run deploy',
-      message: 'Deployment timer expired'
-    }
-  }
-}
-```
-
-### 📡 Real-time Monitoring
-```javascript
-// Get live timer status
-const status = MINOOTS.get('timer_id');
-console.log(`${status.progress * 100}% complete`);
-console.log(`${status.timeRemaining}ms remaining`);
-```
-
-### 🌐 Cloud Integration
-- Firebase backend for global synchronization
-- REST API for cross-platform access
-- Team collaboration and sharing
-- Enterprise authentication (SSO)
-
-## 🧱 Platform Foundations (Sprint 0)
-
-MINOOTS is evolving into the distributed horology platform described in `AGENTIC_TIMER_ARCHITECTURE.md`. This repository now
-contains runnable foundations for that architecture:
-
-| Component | Path | What ships now |
+| Component | Path | What it does now |
 | --- | --- | --- |
-| Control Plane service | `apps/control-plane` | Express + Zod API for creating/listing/cancelling timers with multi-tenant validation |
-| Horology Kernel | `services/horology-kernel` | Rust scheduler with Tokio-driven timers, broadcast event stream, and cancellation semantics |
-| Action Orchestrator | `services/action-orchestrator` | Timer event consumers that trigger webhooks and stubbed agent prompts |
-| Contracts & Dev Track | `proto/timer.proto`, `docs/DEVELOPMENT_TRACK.md` | gRPC definitions and the execution plan for landing the full platform |
+| Control plane | `apps/control-plane` | Express + Zod REST API with gRPC client for the kernel. Supports in-memory storage by default or JSON file persistence via `TIMER_STORE_PATH`. |
+| Horology kernel | `services/horology-kernel` | Tokio scheduler with optional on-disk recovery (`KERNEL_PERSIST_PATH`), gRPC surface, and NATS event publishing (`NATS_URL`). |
+| Action orchestrator | `services/action-orchestrator` | Listens to timer events from NATS (or STDIN fallback) and executes webhook / agent actions. |
+| Proto contracts | `proto/timer.proto` | Shared protobuf definition used by the control plane and kernel. |
 
-### Local development stack
-1. Install dependencies:
-   - `cd apps/control-plane && npm install`
-   - `cd services/action-orchestrator && npm install`
-   - `cd services/horology-kernel && cargo build`
-2. Run the services:
-   - Control plane REST API: `npm run dev` (port 4000)
-   - Horology kernel: `cargo run --bin kernel`
-   - Action orchestrator: `npm run dev` (connects to NATS via `NATS_URL` or reads STDIN events)
-3. Use the existing CLI (`independent-timer.js`) or HTTP calls to interact with the control plane and watch timers propagate
-   through the kernel and orchestrator.
+### Key capabilities
 
-See [`docs/DEVELOPMENT_TRACK.md`](docs/DEVELOPMENT_TRACK.md) for the detailed engineering track and next milestones, and
-[`docs/ENGINEERING_PRIORITIES.md`](docs/ENGINEERING_PRIORITIES.md) for the current repo reality check + high-priority backlog.
+- ✅ REST + gRPC: Create, list, get, and cancel timers over REST while the service
+  proxies calls to the Rust kernel through gRPC.
+- ✅ Durable storage: File-backed persistence for the control plane and kernel so
+  timers survive process restarts when the relevant environment variables are set.
+- ✅ Event fabric: The kernel publishes lifecycle events to NATS so the action
+  orchestrator can execute follow-on work.
+- ✅ Test coverage: Vitest suites exercise the control plane service (including a
+  gRPC stub) and the Rust crate ships `cargo test` coverage for scheduling,
+  cancellation, and proto conversions.
 
-## 📖 Documentation
+### Known limitations
 
-### Basic Usage
+- ❌ No multi-node or HA semantics—timers run in a single process.
+- ❌ Persistence uses simple JSON files; Postgres/SQL backends are still on the
+  backlog.
+- ❌ Authentication relies on API keys loaded from configuration files or env,
+  not a full identity provider.
+- ❌ The orchestrator executes actions serially and lacks retry/circuit breaker logic.
 
-#### Create Timers
-```javascript
-// Simple timer
-MINOOTS.create({ name: 'simple', duration: '30s' });
+## 🚀 Getting started locally
 
-// Complex workflow timer
-MINOOTS.create({
-  name: 'deployment_pipeline',
-  duration: '15m',
-  metadata: { environment: 'production', version: '1.2.3' },
-  events: {
-    on_expire: {
-      webhook: 'https://api.company.com/deploy-complete',
-      command: 'docker deploy production:latest',
-      file_write: {
-        file: 'deployment.log',
-        content: 'Production deployment completed at ${timestamp}'
-      }
-    }
-  }
-});
-```
+1. **Install prerequisites**
+   - Node.js 18+
+   - Rust 1.75+
+   - A running NATS instance if you want real event streaming (optional)
 
-#### Duration Formats
-```javascript
-'30s'    // 30 seconds
-'5m'     // 5 minutes  
-'2h'     // 2 hours
-'1d'     // 1 day
-3600000  // milliseconds
-```
+2. **Install dependencies**
+   ```bash
+   cd apps/control-plane && npm install
+   cd ../.. && cd services/action-orchestrator && npm install
+   cd ../.. && cd services/horology-kernel && cargo build
+   ```
 
-#### Monitor Timers
-```javascript
-// List all active timers
-const timers = MINOOTS.list();
-timers.forEach(t => {
-  console.log(`${t.name}: ${Math.round(t.progress * 100)}% complete`);
-});
+3. **Prepare persistence (optional)**
+   - Control plane: set `TIMER_STORE_PATH=/tmp/minoots-control-plane.json`
+   - Kernel: set `KERNEL_PERSIST_PATH=/tmp/minoots-kernel.json`
+   - API keys: create a JSON file `[ { "key": "mnt_example", "userId": "demo", "tier": "free" } ]`
+     and point `API_KEYS_PATH` at it
 
-// Get specific timer
-const timer = MINOOTS.get('timer_id');
-console.log(`Status: ${timer.status}`);
-console.log(`Remaining: ${timer.timeRemaining}ms`);
+4. **Start the services**
+   ```bash
+   # Rust kernel (will publish NATS events when NATS_URL is set)
+   cd services/horology-kernel
+   NATS_URL=nats://localhost:4222 \
+   KERNEL_PERSIST_PATH=/tmp/minoots-kernel.json \
+   cargo run --bin kernel
 
-// Read timer logs
-const logs = MINOOTS.logs('timer_id');
-console.log(logs);
-```
+   # Control plane REST API (port 4000)
+   cd ../.. && cd apps/control-plane
+   TIMER_STORE_PATH=/tmp/minoots-control-plane.json \
+   KERNEL_GRPC_ADDRESS=localhost:50051 \
+   API_KEYS_PATH=../config/api-keys.json \
+   npm run dev
 
-#### Cancel & Cleanup
-```javascript
-// Cancel specific timer
-MINOOTS.cancel('timer_id');
+   # Action orchestrator (listens to NATS)
+   cd ../.. && cd services/action-orchestrator
+   NATS_URL=nats://localhost:4222 npm run dev
+   ```
 
-// Clean up completed timers
-MINOOTS.cleanup();
-```
+5. **Create a timer**
+   ```bash
+   curl -X POST http://localhost:4000/timers \
+     -H "Content-Type: application/json" \
+     -H "X-API-Key: mnt_example" \
+     -d '{
+       "tenantId": "demo",
+       "requestedBy": "cli",
+       "name": "coffee-break",
+       "duration": "30s",
+       "metadata": {"note": "brew beans"}
+     }'
+   ```
 
-### Advanced Features
+   The kernel will persist the timer and publish lifecycle events to NATS.
+   The orchestrator prints webhook execution logs when the timer fires.
 
-#### Timer Chains
-```javascript
-// Create dependent timers
-const timer1 = MINOOTS.create({ name: 'step1', duration: '1m' });
-const timer2 = MINOOTS.create({ 
-  name: 'step2', 
-  duration: '30s',
-  depends_on: timer1.id 
-});
-```
+## 🔌 Configuration reference
 
-#### Conditional Execution
-```javascript
-MINOOTS.create({
-  name: 'conditional_deploy',
-  duration: '5m',
-  conditions: {
-    environment: 'production',
-    tests_passed: true
-  }
-});
-```
+| Variable | Service | Purpose |
+| --- | --- | --- |
+| `TIMER_STORE_PATH` | Control plane | JSON file used for timer persistence. When unset, an in-memory map is used. |
+| `KERNEL_GRPC_ADDRESS` | Control plane | Address of the running kernel gRPC server. Enables gRPC gateway when set. |
+| `API_KEYS_PATH` / `API_KEYS_JSON` | Control plane | Sources API keys for authentication. Falls back to demo keys when unset. |
+| `KERNEL_PERSIST_PATH` | Kernel | JSON file used to persist timer state between restarts. |
+| `NATS_URL` | Kernel & orchestrator | Connection string for NATS. Enables event publishing/consumption. |
+| `NATS_SUBJECT` | Kernel & orchestrator | Subject used for timer events (defaults to `minoots.timer.events`). |
+| `MINOOTS_BOOT_DEMO` | Kernel | Boots a demo timer for smoke testing. |
 
-#### Team Collaboration
-```javascript
-// Share timer with team
-MINOOTS.share('timer_id', {
-  team: 'devops-team',
-  permissions: ['read', 'cancel']
-});
-```
+## 🧪 Tests
 
-## 🛠️ Installation & Setup
+- Control plane: `cd apps/control-plane && npm test`
+- Horology kernel: `cd services/horology-kernel && cargo test`
 
-### Local Development
-```bash
-git clone https://github.com/domusgpt/minoots-timer-system.git
-cd minoots-timer-system
-npm install
-npm test
-npm start
-```
+The control plane test suite now spins up a temporary gRPC server to exercise the
+TypeScript ↔ proto conversions. The kernel suite covers scheduling semantics,
+persistence helpers, and JSON/protobuf conversions.
 
-### Cloud Setup (Firebase)
-```bash
-# Install Firebase CLI
-npm install -g firebase-tools
+## 🛣️ Roadmap snapshot
 
-# Deploy MINOOTS backend
-firebase login
-firebase deploy
+1. **Database-backed persistence** – Swap JSON files for Postgres/SQLite adapters
+   and snapshot/replay logic in the kernel.
+2. **Stream processing hardening** – Add retry, DLQ, and delivery guarantees to
+   the NATS event flow and orchestrator action execution.
+3. **Auth & policy engine** – Replace static API keys with OAuth/Firebase and
+   tenant-scoped quotas.
+4. **Observability** – Ship OpenTelemetry spans + structured logging for all
+   services and document dashboards.
 
-# Configure authentication
-firebase auth:import users.json
-```
+See [`docs/ENGINEERING_PRIORITIES.md`](docs/ENGINEERING_PRIORITIES.md) for the
+full backlog and status callouts.
 
-### Docker Deployment
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 3000
-CMD ["npm", "start"]
-```
+## 🙌 Contributing
 
-```bash
-docker build -t minoots .
-docker run -d -p 3000:3000 minoots
-```
-
-## 🔌 Integrations
-
-### MCP (Model Context Protocol)
-```javascript
-// For AI agents using Claude Code
-const mcp = require('@minoots/mcp-extension');
-
-// Create timer through MCP
-await mcp.createTimer({
-  name: 'agent_task_timeout',
-  duration: '10m',
-  agent_id: 'claude_agent_001'
-});
-```
-
-### REST API
-```bash
-# Create timer via API
-curl -X POST https://api.minoots.com/v1/timers \
-  -H "Authorization: Bearer $API_KEY" \
-  -d '{
-    "name": "api_timer",
-    "duration": "5m",
-    "events": {
-      "on_expire": {
-        "webhook": "https://myapp.com/timer-done"
-      }
-    }
-  }'
-
-# Get timer status
-curl https://api.minoots.com/v1/timers/timer_id \
-  -H "Authorization: Bearer $API_KEY"
-```
-
-### Webhooks
-```javascript
-// Receive timer events
-app.post('/webhook/timer-expired', (req, res) => {
-  const { timer, event, timestamp } = req.body;
-  console.log(`Timer ${timer.name} expired at ${timestamp}`);
-  res.status(200).send('OK');
-});
-```
-
-## 💰 Pricing
-
-### Free Tier
-- ✅ Up to 100 active timers
-- ✅ Basic webhook support
-- ✅ Community support
-- ✅ 30-day history
-
-### Pro ($9/month)
-- ✅ Up to 10,000 timers
-- ✅ Advanced webhooks
-- ✅ Team collaboration
-- ✅ Priority support
-- ✅ 1-year history
-
-### Enterprise ($99/month)
-- ✅ Unlimited timers
-- ✅ SSO integration
-- ✅ Custom integrations
-- ✅ SLA guarantees
-- ✅ Dedicated support
-
-## 🤝 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-```bash
-# Development setup
-npm install
-npm run dev
-
-# Run tests
-npm test
-
-# Build for production
-npm run build
-```
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## 🆘 Support
-
-- 📚 [Documentation](https://docs.minoots.com)
-- 💬 [Discord Community](https://discord.gg/minoots)
-- 🐛 [Report Issues](https://github.com/domusgpt/minoots-timer-system/issues)
-- 📧 [Email Support](mailto:support@minoots.com)
-
----
-
-**Built with ❤️ for autonomous agents and enterprise workflows**
-
-*MINOOTS: Because your timers should be as reliable as your code.*
+This project is under active iteration. Please open issues or PRs if you spot
+bugs or want to propose enhancements. When changing the gRPC surface, update
+`proto/timer.proto` and regenerate the Rust code via `cargo build` in the kernel
+crate.

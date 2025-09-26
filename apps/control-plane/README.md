@@ -5,8 +5,9 @@ SDKs, and human operators to manage timers that will be executed by the horology
 
 ## Features
 - Validates timer definitions with Zod schemas and normalizes durations.
-- Persists timer metadata using a repository abstraction (currently an in-memory store).
-- Emits timer lifecycle commands to the horology kernel through a pluggable gateway (gRPC when configured, in-process noop otherwise).
+- Persists timer metadata using a repository abstraction (in-memory by default, file-backed when `TIMER_STORE_PATH` is set).
+- Emits timer lifecycle commands to the horology kernel through a pluggable gateway (gRPC when `KERNEL_GRPC_ADDRESS` is configured, noop otherwise).
+- Supports configurable API key authentication via `API_KEYS_PATH` / `API_KEYS_JSON` with tier-based rate limiting.
 - Provides tenant-aware APIs suitable for multi-tenant and swarm workloads.
 
 ## Endpoints
@@ -34,6 +35,9 @@ curl -X POST http://localhost:4000/timers \
 ```bash
 cd apps/control-plane
 npm install
+TIMER_STORE_PATH=/tmp/minoots-control-plane.json \
+KERNEL_GRPC_ADDRESS=127.0.0.1:50051 \
+API_KEYS_PATH=../config/api-keys.json \
 npm run dev
 ```
 
@@ -42,12 +46,8 @@ The dev server runs on port `4000`.
 ### Talking to the Rust Horology Kernel
 
 - Ensure the kernel is running: `cd ../../services/horology-kernel && cargo run --bin kernel`.
-- Export the gRPC address before starting the control plane (the kernel listens on `127.0.0.1:50051` by default):
-  ```bash
-  export KERNEL_GRPC_ADDRESS="127.0.0.1:50051"
-  export KERNEL_PROTO_PATH="$(pwd)/../../proto/timer.proto" # optional if repo layout is unchanged
-  npm run dev
-  ```
+- Export the gRPC address before starting the control plane (the kernel listens on `127.0.0.1:50051` by default). The control
+  plane resolves the proto automatically, but `KERNEL_PROTO_PATH` may be provided if the repo layout changes.
 - When the address is not provided the service falls back to the `NoopKernelGateway`, allowing local development without the kernel.
 
-Swap `InMemoryTimerRepository` for a real persistence adapter (e.g., Postgres) when you're ready to store timers durably.
+Swap the file-backed repository for a real persistence adapter (e.g., Postgres) when you're ready to store timers durably across processes.
