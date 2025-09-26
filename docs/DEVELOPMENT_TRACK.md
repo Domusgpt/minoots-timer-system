@@ -25,10 +25,10 @@ it locally, and lays out the phased backlog that the team can execute immediatel
 
 ## 3. Sprint 0 (Foundations) Deliverables
 The repository now contains the baseline code required to launch the platform locally:
-- **Control Plane service** (`apps/control-plane`) with Express + Zod validation, a timer service layer, and an in-memory
-  repository ready to swap for Postgres.
-- **Horology Kernel crate** (`services/horology-kernel`) implementing an async scheduler with Tokio, broadcast timer events, and
-  cancellation semantics.
+- **Control Plane service** (`apps/control-plane`) with Express + Zod validation, a timer service layer, and a file-backed
+  repository (`TIMER_STORE_PATH`) ready to swap for Postgres.
+- **Horology Kernel crate** (`services/horology-kernel`) implementing an async scheduler with Tokio, optional JSON persistence
+  (`KERNEL_PERSIST_PATH`), broadcast timer events, and NATS publishing.
 - **Action Orchestrator service** (`services/action-orchestrator`) that listens to timer events, performs HTTP/webhook actions,
   and records execution traces.
 - **Shared protobuf** (`proto/timer.proto`) describing the kernel RPC surface and event envelopes.
@@ -51,9 +51,11 @@ Each of these deliverables includes inline documentation and starter scripts so 
    - `cd services/action-orchestrator && npm install`
    - `cd services/horology-kernel && cargo build`
 3. **Run the stack locally**
-   - Control plane: `npm run dev` inside `apps/control-plane` (listens on `localhost:4000`).
-   - Horology kernel: `cargo run --bin kernel` (spawns scheduler and exposes gRPC/TCP placeholder).
-   - Action orchestrator: `npm run dev` inside `services/action-orchestrator` (subscribes to local NATS or in-process queue).
+   - Control plane: `npm run dev` inside `apps/control-plane` (listens on `localhost:4000`). Set `TIMER_STORE_PATH` and
+     `KERNEL_GRPC_ADDRESS` to enable persistence + gRPC.
+   - Horology kernel: `cargo run --bin kernel` (spawns scheduler and exposes gRPC). Configure `KERNEL_PERSIST_PATH` for
+     on-disk recovery and `NATS_URL` to publish timer events.
+   - Action orchestrator: `npm run dev` inside `services/action-orchestrator` (subscribes to local NATS or STDIN fallback).
    - Use the CLI (`independent-timer.js`) or HTTP calls to create timers and observe events flowing through the services.
 4. **Testing cadence** – Each service ships its own unit tests (`npm test` / `cargo test`). Scenario tests in `tests/` will evolve
    to orchestrate the full workflow once persistence is wired up.

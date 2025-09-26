@@ -6,6 +6,7 @@ import { logger } from './telemetry/logger';
 import { GrpcKernelGateway } from './services/grpcKernelGateway';
 import { KernelGateway, NoopKernelGateway } from './services/kernelGateway';
 import { authenticateUser, rateLimitMiddleware } from './middleware/auth';
+import { FileTimerRepository } from './store/fileTimerRepository';
 
 export const createServer = (): Application => {
   const app = express();
@@ -16,7 +17,15 @@ export const createServer = (): Application => {
   app.use(authenticateUser);
   app.use(rateLimitMiddleware);
 
-  const timerRepository = new InMemoryTimerRepository();
+  const timerRepository = process.env.TIMER_STORE_PATH
+    ? new FileTimerRepository(process.env.TIMER_STORE_PATH)
+    : new InMemoryTimerRepository();
+
+  if (!process.env.TIMER_STORE_PATH) {
+    logger.warn('Using in-memory timer repository (persistence disabled)');
+  } else {
+    logger.info({ path: process.env.TIMER_STORE_PATH }, 'Using file-backed timer repository');
+  }
   const kernelGateway: KernelGateway = process.env.KERNEL_GRPC_ADDRESS
     ? new GrpcKernelGateway(
         process.env.KERNEL_GRPC_ADDRESS,

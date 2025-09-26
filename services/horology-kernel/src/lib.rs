@@ -1,10 +1,13 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    io::ErrorKind,
+    path::PathBuf,
     pin::Pin,
     sync::Arc,
     time::Duration,
 };
 
+use anyhow::{Context, Result as AnyResult};
 use chrono::{DateTime, TimeZone, Utc};
 use futures_core::Stream;
 use prost_types::{
@@ -14,7 +17,8 @@ use prost_types::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{
-    sync::{broadcast, RwLock},
+    fs,
+    sync::{broadcast, Mutex, RwLock},
     time as tokio_time,
 };
 use tokio_stream::{
@@ -77,6 +81,7 @@ pub struct Escalation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct TimerAction {
     pub id: String,
     pub kind: String,
@@ -86,6 +91,7 @@ pub struct TimerAction {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct TimerActionBundle {
     pub actions: Vec<TimerAction>,
     pub concurrency: Option<u32>,
@@ -93,6 +99,7 @@ pub struct TimerActionBundle {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentBinding {
     pub adapter: String,
     pub target: String,
@@ -102,6 +109,7 @@ pub struct AgentBinding {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TimerSpec {
     pub id: Option<Uuid>,
     pub tenant_id: String,
@@ -116,6 +124,7 @@ pub struct TimerSpec {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TimerInstance {
     pub id: Uuid,
     pub tenant_id: String,
@@ -145,7 +154,7 @@ impl TimerInstance {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "data")]
+#[serde(tag = "type", content = "data", rename_all = "lowercase")]
 pub enum TimerEvent {
     Scheduled(TimerInstance),
     Fired(TimerInstance),
@@ -164,6 +173,13 @@ struct KernelState {
     timers: Arc<RwLock<HashMap<Uuid, TimerInstance>>>,
     event_tx: broadcast::Sender<TimerEvent>,
     config: SchedulerConfig,
+    persistence: Option<PersistenceLayer>,
+}
+
+#[derive(Clone)]
+struct PersistenceLayer {
+    path: Arc<PathBuf>,
+    lock: Arc<Mutex<()>>,
 }
 
 #[derive(Clone)]
@@ -179,8 +195,48 @@ impl HorologyKernel {
                 timers: Arc::new(RwLock::new(HashMap::new())),
                 event_tx,
                 config,
+                persistence: None,
             },
         }
+    }
+
+    pub async fn with_persistence<P: Into<PathBuf>>(config: SchedulerConfig, path: P) -> AnyResult<Self> {
+        let (event_tx, _rx) = broadcast::channel(1024);
+        let persistence = PersistenceLayer::new(path.into());
+        let kernel = Self {
+            state: KernelState {
+                timers: Arc::new(RwLock::new(HashMap::new())),
+                event_tx,
+                config,
+                persistence: Some(persistence.clone()),
+            },
+        };
+
+        let restored = persistence
+            .load()
+            .await
+            .context("failed to load persisted timers")?;
+
+        {
+            let mut timers = kernel.state.timers.write().await;
+            for timer in restored {
+                timers.insert(timer.id, timer);
+            }
+        }
+
+        let pending = {
+            let timers = kernel.state.timers.read().await;
+            timers.values().cloned().collect::<Vec<_>>()
+        };
+
+        for timer in pending {
+            if timer.is_terminal() {
+                continue;
+            }
+            kernel.spawn_fire_task(timer);
+        }
+
+        Ok(kernel)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<TimerEvent> {
@@ -250,6 +306,8 @@ impl HorologyKernel {
 
         self.spawn_fire_task(timer.clone());
 
+        self.persist_state().await;
+
         Ok(timer)
     }
 
@@ -281,6 +339,7 @@ impl HorologyKernel {
             timer: snapshot.clone(),
             reason,
         });
+        self.persist_state().await;
         Some(snapshot)
     }
 
@@ -305,11 +364,14 @@ impl HorologyKernel {
 
     fn spawn_fire_task(&self, timer: TimerInstance) {
         let state = self.state.clone();
+        let kernel = self.clone();
         let span = tracing::info_span!("timer_fire_task", timer_id = %timer.id, tenant_id = %timer.tenant_id);
         tokio::spawn(
             async move {
-                let duration = Duration::from_millis(timer.duration_ms);
-                tokio_time::sleep(duration).await;
+                let delay = remaining_duration(&timer);
+                if !delay.is_zero() {
+                    tokio_time::sleep(delay).await;
+                }
 
                 let mut timers = state.timers.write().await;
                 let entry = match timers.get_mut(&timer.id) {
@@ -327,9 +389,22 @@ impl HorologyKernel {
                 drop(timers);
 
                 let _ = state.event_tx.send(TimerEvent::Fired(snapshot));
+                kernel.persist_state().await;
             }
             .instrument(span),
         );
+    }
+
+    async fn persist_state(&self) {
+        if let Some(persistence) = &self.state.persistence {
+            let snapshot = {
+                let timers = self.state.timers.read().await;
+                timers.values().cloned().collect::<Vec<_>>()
+            };
+            if let Err(err) = persistence.save(snapshot).await {
+                tracing::warn!(?err, "failed to persist timer state");
+            }
+        }
     }
 }
 
@@ -791,6 +866,58 @@ fn event_tenant_id(event: &TimerEvent) -> String {
         | TimerEvent::Fired(timer)
         | TimerEvent::Cancelled { timer, .. }
         | TimerEvent::Failed { timer, .. } => timer.tenant_id.clone(),
+    }
+}
+
+fn remaining_duration(timer: &TimerInstance) -> Duration {
+    let now = Utc::now();
+    if timer.fire_at <= now {
+        return Duration::from_millis(0);
+    }
+    (timer.fire_at - now)
+        .to_std()
+        .unwrap_or_else(|_| Duration::from_millis(0))
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedTimers {
+    timers: Vec<TimerInstance>,
+}
+
+impl PersistenceLayer {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path: Arc::new(path),
+            lock: Arc::new(Mutex::new(())),
+        }
+    }
+
+    async fn load(&self) -> AnyResult<Vec<TimerInstance>> {
+        match fs::read(&*self.path).await {
+            Ok(bytes) => {
+                let persisted: PersistedTimers = serde_json::from_slice(&bytes)
+                    .context("failed to parse persisted timers")?;
+                Ok(persisted.timers)
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => Ok(Vec::new()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn save(&self, timers: Vec<TimerInstance>) -> AnyResult<()> {
+        let _guard = self.lock.lock().await;
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("failed to create directory for {:?}", self.path))?;
+        }
+
+        let payload = PersistedTimers { timers };
+        let bytes = serde_json::to_vec_pretty(&payload)?;
+        fs::write(&*self.path, bytes)
+            .await
+            .with_context(|| format!("failed to write persisted timers to {:?}", self.path))?;
+        Ok(())
     }
 }
 

@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
+
 import { Request, Response, NextFunction } from 'express';
+
 import { logger } from '../telemetry/logger';
 
 interface User {
@@ -6,13 +9,57 @@ interface User {
   tier: 'free' | 'pro' | 'team';
 }
 
-// Simple in-memory API key store (TODO: Replace with database)
-const apiKeys = new Map<string, User>([
-  // Demo keys for testing
-  ['mnt_demo_key_free', { id: 'demo-user-1', tier: 'free' }],
-  ['mnt_demo_key_pro', { id: 'demo-user-2', tier: 'pro' }],
-  ['mnt_demo_key_team', { id: 'demo-user-3', tier: 'team' }],
-]);
+type ApiKeyConfig = { key: string; userId: string; tier: User['tier'] };
+
+const loadApiKeys = (): Map<string, User> => {
+  const store = new Map<string, User>();
+
+  const fromFile = process.env.API_KEYS_PATH;
+  if (fromFile) {
+    try {
+      const raw = readFileSync(fromFile, 'utf-8');
+      const parsed = JSON.parse(raw) as ApiKeyConfig[];
+      parsed.forEach((entry) => {
+        if (!entry?.key || !entry?.userId || !entry?.tier) {
+          logger.warn({ entry }, 'Skipping invalid API key entry');
+          return;
+        }
+        store.set(entry.key, { id: entry.userId, tier: entry.tier });
+      });
+      logger.info({ path: fromFile, total: store.size }, 'Loaded API keys from configuration file');
+      return store;
+    } catch (error) {
+      logger.error({ error, path: fromFile }, 'Failed to load API keys from file');
+    }
+  }
+
+  const inline = process.env.API_KEYS_JSON;
+  if (inline) {
+    try {
+      const parsed = JSON.parse(inline) as ApiKeyConfig[];
+      parsed.forEach((entry) => {
+        if (!entry?.key || !entry?.userId || !entry?.tier) {
+          logger.warn({ entry }, 'Skipping invalid API key entry');
+          return;
+        }
+        store.set(entry.key, { id: entry.userId, tier: entry.tier });
+      });
+      logger.info({ total: store.size }, 'Loaded API keys from environment configuration');
+      return store;
+    } catch (error) {
+      logger.error({ error }, 'Failed to parse API_KEYS_JSON');
+    }
+  }
+
+  logger.warn('Falling back to built-in demo API keys');
+  return new Map<string, User>([
+    ['mnt_demo_key_free', { id: 'demo-user-1', tier: 'free' }],
+    ['mnt_demo_key_pro', { id: 'demo-user-2', tier: 'pro' }],
+    ['mnt_demo_key_team', { id: 'demo-user-3', tier: 'team' }],
+  ]);
+};
+
+const apiKeys = loadApiKeys();
 
 // Request rate limiting (simple in-memory)
 const rateLimits = new Map<string, { count: number; resetAt: number }>();

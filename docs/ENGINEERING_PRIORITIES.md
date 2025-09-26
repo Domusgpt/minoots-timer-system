@@ -10,9 +10,9 @@ control plane, highlights the most pressing product gaps, and calls out the next
 
 | Area | Current Status | Risks / Notes |
 | --- | --- | --- |
-| Control Plane (`apps/control-plane`) | Express service with Zod validation, in-memory persistence, and a pluggable kernel gateway. Now ships a gRPC-aware gateway (`GrpcKernelGateway`) but still depends on environment variables for a running kernel. | No auth, quotas, or real storage. REST tests only cover the in-memory/noop path. |
-| Horology Kernel (`services/horology-kernel`) | Tokio-based scheduler with broadcast events. gRPC server compiles, converts domain ↔ proto types (including nested escalations), and unit tests cover scheduling, cancellation, duplicate protection, and action conversion. | Kernel is single-node and volatile (in-memory HashMap). No persistence, clustering, or crash recovery. |
-| Action Orchestrator (`services/action-orchestrator`) | Can read timer events (STDIN/NATS stubs) and execute webhook/agent actions. | Not yet wired to the kernel's event stream. Needs durable event source and execution telemetry. |
+| Control Plane (`apps/control-plane`) | Express service with Zod validation, file-backed persistence (`TIMER_STORE_PATH`), configurable API key auth, and a gRPC-aware kernel gateway. Vitest suites cover service logic plus gRPC conversion stubs. | Needs real database adapter, integration tests against a live kernel, and stronger auth/quotas. |
+| Horology Kernel (`services/horology-kernel`) | Tokio scheduler with optional JSON persistence (`KERNEL_PERSIST_PATH`), gRPC server, broadcast events, and NATS publishing when `NATS_URL` is set. | Still single-node, single-process. Persistence is JSON-only and lacks replay/compaction. No clustering/failover. |
+| Action Orchestrator (`services/action-orchestrator`) | Subscribes to NATS subjects (or STDIN) and executes webhook/agent actions with structured logging. | Lacks retries, DLQ handling, and telemetry back into the control plane. |
 | Shared Contracts (`proto/`) | `timer.proto` + vendored Google protos compile for Rust and load for TS. | Any contract change must regenerate Rust (`build.rs`) and update TS loaders manually; no automation yet. |
 
 **Key takeaway:** the repo is a runnable prototype. Documentation in the root repo still advertises a production-ready SaaS, but
@@ -21,37 +21,32 @@ below is delivered.
 
 ## 2. Work Finished in This Iteration
 
-- Fixed the Rust kernel build by updating `BroadcastStream` handling, protobuf conversions, and JSON struct mapping to
-  `prost_types::Struct`'s `BTreeMap` requirements.
-- Added a regression test (`timer_action_proto_roundtrip_preserves_escalations`) guaranteeing nested escalation actions convert
-  to/from protobuf safely.
-- Ensured `cargo fmt` + `cargo test` succeed for the kernel crate, and `npm run build` + `npm test` succeed for the control
-  plane.
-- Hardened TypeScript ↔ gRPC translations inside `GrpcKernelGateway`, covering timestamps, JSON metadata, and retry policy shapes.
-
-This unblocks end-to-end experiments once someone stands up the kernel binary and points the control plane at it via
-`KERNEL_GRPC_ADDRESS`.
+- Added a file-backed timer repository to the control plane (`TIMER_STORE_PATH`) and configurable API key loading
+  via `API_KEYS_PATH` / `API_KEYS_JSON`.
+- Extended Vitest coverage with a stubbed gRPC kernel server to validate schedule/list parity and timestamp conversions.
+- Introduced `HorologyKernel::with_persistence` to reload timers from disk and re-arm pending expirations.
+- Wired the kernel to publish timer events to NATS (guarded by `NATS_URL`), aligning the action orchestrator with
+  real kernel events.
+- Updated documentation (`README.md`, `CURRENT_STATUS_SUMMARY.md`) to reflect the prototype reality instead of
+  production marketing copy.
 
 ## 3. Highest-Priority Engineering Tasks
 
-1. **Ship an End-to-End gRPC Path (Critical)**
-   - Stand up the kernel gRPC server (`cargo run --bin kernel`) in local/dev envs.
-   - Extend control-plane integration tests (Vitest) to stub the gRPC client and assert conversion parity, including
-     missing metadata/labels and multi-layer escalations.
-   - Add a happy-path integration test that boots the kernel in-process during tests (Tokio runtime) and exercises
-     schedule → list → cancel via the REST API.
-   - Wire streaming (`StreamTimerEvents`) to a consumer test to validate tenant/topic filtering logic.
+1. **End-to-End Integration Coverage (Critical)**
+   - Spin up the kernel + control plane in tests (or docker-compose) and exercise REST → gRPC → kernel → NATS → orchestrator.
+   - Add contract tests for the streaming gRPC endpoint and tenant/topic filtering.
 
-2. **Replace In-Memory State With Durable Persistence (High)**
-   - Introduce a Postgres adapter for `TimerRepository` and corresponding persistence inside the kernel (start with a
-     single-node append-only log + periodic snapshots).
-   - Migrate existing tests to run against an ephemeral Postgres (e.g., `docker compose` or `testcontainers`).
-   - Design the replication path so the kernel can recover on restart (persist timers, replay outstanding ones).
+2. **Persistent Storage Upgrade (High)**
+   - Land a Postgres (or SQLite) adapter for the control plane timer repository with migrations and tests.
+   - Replace the kernel's JSON files with an append-only log + compaction strategy and verify restart semantics.
 
-3. **Connect the Action Orchestrator (High)**
-   - Emit kernel events over NATS/JetStream (or another broker) and subscribe from the orchestrator.
-   - Define action result reporting so the kernel/control plane can surface execution outcomes.
-   - Add retries, circuit breakers, and telemetry around outbound HTTP/agent calls.
+3. **Reliability & Telemetry (High)**
+   - Implement retries/backoff + DLQ handling in the orchestrator and surface execution results via events/APIs.
+   - Introduce OpenTelemetry traces/log schema shared across services.
+
+4. **Auth & Policy Hardening (High)**
+   - Swap static API keys for a real identity provider and persist rate-limit counters.
+   - Document tenant quotas and wire usage reporting to the control plane.
 
 ## 4. Supporting Initiatives
 

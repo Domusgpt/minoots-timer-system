@@ -1,175 +1,83 @@
-# 🚀 MINOOTS CURRENT STATUS - READY FOR LAUNCH
+# MINOOTS Current Status — Prototype with Durable Foundations
 
-## ✅ WHAT'S FULLY COMPLETED & WORKING
+_Last updated: 2025-07-14_
 
-### 🔐 Authentication & Security System
-- **Firebase Auth Integration** - Users can authenticate with Firebase tokens
-- **API Key System** - Developers can create/manage API keys for programmatic access
-- **Rate Limiting** - Tier-based limits enforced (Free: 10/min, Pro: 100/min, Team: 500/min)
-- **Usage Tracking** - Daily timer limits and concurrent timer limits enforced
-- **Security Middleware** - All endpoints properly secured except public ones
+## ✅ What works today
 
-### 💰 Payment & Billing System
-- **Stripe Integration** - Complete checkout flow implementation
-- **Subscription Management** - Handle Pro/Team tier upgrades
-- **Webhook Processing** - Automatic tier upgrades when payments succeed
-- **Billing Portal** - Customers can manage subscriptions
-- **Pricing API** - Public endpoint showing all tiers and features
+### Control Plane (TypeScript)
+- Authenticated REST API backed by Express + Zod validation.
+- gRPC gateway talks to the Rust kernel; Vitest suite stubs the kernel to
+  validate proto conversions.
+- Persistence via `TIMER_STORE_PATH` file store (defaults to in-memory).
+- Tier-based rate limiting seeded by configurable API keys (`API_KEYS_PATH` or
+  `API_KEYS_JSON`).
 
-### ⏲️ Core Timer System
-- **REST API** - 7 working endpoints with authentication
-- **Real-time Progress** - Timer progress calculated in real-time
-- **Scheduled Functions** - Automatic timer expiration processing
-- **Tier Limits** - Free tier: 5 concurrent, 100/day; Pro/Team: unlimited
-- **Webhook Support** - Timers can trigger webhooks on expiration
+### Horology Kernel (Rust)
+- Tokio scheduler with gRPC server (`cargo run --bin kernel`).
+- Optional JSON persistence (`KERNEL_PERSIST_PATH`) reloads timers on restart and
+  re-arms pending expirations.
+- Publishes timer lifecycle events to NATS when `NATS_URL` is configured.
+- Broadcast event channel powers local subscribers and the NATS bridge.
 
-### 🤖 Agent Integration
-- **MCP Server** - 8 tools for Claude agent integration (Pro tier only)
-- **Node.js SDK** - Complete SDK with examples and tests
-- **API Documentation** - Comprehensive docs and Postman collection
+### Action Orchestrator (TypeScript)
+- Subscribes to NATS subjects (falls back to STDIN) and executes webhook / agent
+  actions when timers fire.
+- Structured logging via Pino to trace execution.
 
-## 🎯 BUSINESS MODEL LOCKED IN
+### Developer Experience
+- `README.md` now documents the true prototype state and configuration knobs.
+- Unit tests: `npm test` for the control plane, `cargo test` for the kernel.
+- Proto contracts shared via `proto/timer.proto`.
 
-### Pricing Strategy:
-- **Free Tier**: 5 concurrent timers, 100/month - drives adoption
-- **Pro Tier**: $19/month - Unlimited timers + MCP integration
-- **Team Tier**: $49/month - Everything + team features
+## ⚠️ Gaps & Risks
 
-### Competitive Advantage:
-- **First timer system built specifically for AI agents**
-- **MCP integration creates Claude ecosystem lock-in**
-- **Perfect timing with AI agent market explosion**
+1. **Persistence Depth** – JSON files are single-node only; Postgres/SQLite
+   adapters and kernel snapshot/replay logic are required before production use.
+2. **Reliability** – No clustering, failover, or delayed job catch-up beyond the
+   single process restart path.
+3. **Security** – API keys are configurable but there is no user management UI,
+   Stripe billing, or SSO integration despite previous marketing claims.
+4. **Orchestrator Hardening** – Actions run sequentially without retries or
+   circuit breakers; no telemetry is fed back to the control plane.
+5. **Observability** – No OpenTelemetry, tracing aggregation, or metrics exports
+   exist yet.
 
-## 🔥 LIVE PRODUCTION URLS
+## 🎯 Immediate Priorities
 
-- **Base API**: https://api-m3waemr5lq-uc.a.run.app
-- **Health Check**: https://api-m3waemr5lq-uc.a.run.app/health
-- **Pricing Info**: https://api-m3waemr5lq-uc.a.run.app/pricing
-- **GitHub Repo**: https://github.com/Domusgpt/minoots-timer-system
+1. **Database-backed persistence**
+   - Implement Postgres adapters for the control plane repository.
+   - Introduce durable storage + replay in the kernel (append-only log or
+     snapshots) and corresponding tests.
 
-## 📊 VERIFIED WORKING FEATURES
+2. **End-to-end event validation**
+   - Add integration tests that start the kernel + control plane together,
+     schedule timers over REST, and assert NATS events / orchestrator execution.
+   - Exercise the streaming gRPC endpoint in automated tests.
 
-### ✅ Authentication Flow
-```bash
-# 1. Unauthenticated requests are blocked
-curl -X POST https://api-m3waemr5lq-uc.a.run.app/timers
-# Returns: "Authentication required"
+3. **Reliability & retries**
+   - Add retry/backoff policies to orchestrator actions and surface execution
+     outcomes back to the kernel/control plane.
+   - Define dead-letter queues or compensating workflows for failed actions.
 
-# 2. Health check works without auth
-curl https://api-m3waemr5lq-uc.a.run.app/health
-# Returns: {"status":"healthy",...}
+4. **Auth & quotas**
+   - Replace static keys with a hosted identity provider (Firebase/Auth0) and
+     persist rate-limit counters.
+   - Document tenant-level quotas and surface usage metrics.
 
-# 3. Pricing info available publicly
-curl https://api-m3waemr5lq-uc.a.run.app/pricing
-# Returns: Full pricing tiers
-```
+5. **Observability**
+   - Add structured tracing (OpenTelemetry in Rust, OTLP exporters in Node).
+   - Provide dashboards/log sinks for timer lifecycle visibility.
 
-### ✅ Rate Limiting
-- Free tier users hit limits at 10 requests/minute
-- Pro tier users get 100 requests/minute
-- Timer creation has additional limits (2/min free, 20/min pro)
+## 📌 Operational Checklist (still pending)
 
-### ✅ Usage Tracking
-- Daily timer creation counts tracked
-- Concurrent timer limits enforced
-- API usage statistics collected
+- [ ] Automated proto regeneration scripts.
+- [ ] Docker-compose / devcontainer for running the full stack locally.
+- [ ] CI coverage for `npm test`, `cargo test`, and linting.
+- [ ] Documentation for deploying NATS + persistence in staging.
 
-## 🚧 WHAT NEEDS IMMEDIATE ATTENTION
+## 📣 Callouts
 
-### 1. Stripe Configuration (30 minutes)
-```bash
-# Set environment variables
-firebase functions:config:set \
-  stripe.secret_key="sk_live_..." \
-  stripe.webhook_secret="whsec_..." \
-  stripe.price_pro_monthly="price_..." \
-  stripe.price_team_monthly="price_..."
-```
-
-### 2. User Registration Flow (2 hours)
-- Simple Firebase Auth signup form
-- Email verification
-- API key generation on first login
-
-### 3. Basic Web Dashboard (4 hours)
-- React app showing user's timers
-- API key management interface
-- Upgrade to Pro button
-
-## 🎯 LAUNCH READINESS CHECKLIST
-
-### Technical Foundation: ✅ COMPLETE
-- [x] Live API with authentication
-- [x] Payment processing ready
-- [x] Tier limits enforced
-- [x] MCP integration working
-- [x] SDK and documentation complete
-
-### Business Foundation: ✅ COMPLETE
-- [x] Pricing strategy defined
-- [x] Competitive positioning clear
-- [x] Target market identified (AI developers)
-- [x] Revenue projections calculated
-
-### Immediate Launch Needs: 🔄 IN PROGRESS
-- [ ] Stripe account configured
-- [ ] User registration flow
-- [ ] Basic marketing website
-- [ ] First 10 beta users
-
-## 💡 SUCCESS METRICS TO TRACK
-
-### Week 1 Goals:
-- **Technical**: First paying customer
-- **Business**: 10 beta users signed up
-- **Product**: MCP integration working for Claude users
-
-### Month 1 Goals:
-- **Revenue**: $500 MRR (26 Pro subscribers)
-- **Users**: 100 free tier users
-- **Conversion**: 20% free-to-paid rate
-
-### Month 3 Goals:
-- **Revenue**: $5,000 MRR (200+ Pro subscribers)
-- **Users**: 1,000 free tier users
-- **Platform**: Integration with LangChain or CrewAI
-
-## 🚀 IMMEDIATE ACTION PLAN
-
-### Next 24 Hours:
-1. **Set up Stripe account** - Add products, get API keys
-2. **Configure environment variables** - Enable payments
-3. **Test payment flow** - Verify upgrade works end-to-end
-4. **Create simple registration form** - Get first users
-
-### Next Week:
-1. **Basic web dashboard** - Timer management UI
-2. **Marketing content** - Blog post, Product Hunt launch
-3. **Beta user outreach** - Target Claude power users
-4. **Documentation polish** - Make onboarding seamless
-
-### Next Month:
-1. **LangChain integration** - Expand beyond Claude
-2. **Enterprise features** - SSO, team management
-3. **Mobile app** - Timer monitoring on mobile
-4. **Partnership outreach** - AI platform integrations
-
-## 🔥 THE BOTTOM LINE
-
-**MINOOTS is production-ready and positioned to capture the AI agent timing market.**
-
-- ✅ **Technical foundation is solid** - Authentication, payments, core features all working
-- ✅ **Business model is proven** - SaaS pricing for developer tools is well-established
-- ✅ **Market timing is perfect** - AI agents are exploding, timing coordination is painful
-- ✅ **Competitive moat is strong** - MCP integration creates Claude ecosystem lock-in
-
-**What we need now:** Execute on user acquisition and iterate based on feedback.
-
-**Conservative estimate:** 100 users → 20 Pro upgrades = $380/month by end of month
-**Optimistic estimate:** 1000 users → 200 Pro upgrades = $3,800/month by month 3
-
-**This has genuine unicorn potential if executed correctly. The foundation is built - time to get users and grow!** 🦄
-
----
-
-*Last updated: 2025-07-13 - System is live and ready for launch*
+The repository should no longer be described as "production ready" in investor or
+marketing materials. Treat it as a solid prototype with real durability hooks,
+ready for the next engineering push toward managed storage, observability, and
+enterprise-grade auth.
