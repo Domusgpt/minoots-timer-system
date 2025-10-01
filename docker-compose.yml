@@ -1,0 +1,38 @@
+version: '3.9'
+
+services:
+  kernel:
+    build:
+      context: .
+      dockerfile: services/horology-kernel/Dockerfile
+    environment:
+      - KERNEL_GRPC_ADDR=0.0.0.0:50051
+    ports:
+      - "50051:50051"
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: apps/control-plane/Dockerfile
+    environment:
+      - PORT=4000
+      - KERNEL_GRPC_URL=kernel:50051
+      - KERNEL_GATEWAY_MODE=grpc
+      - CONTROL_PLANE_AUTH_MODE=anonymous
+      - USAGE_TRACKER_BACKEND=memory
+      - API_KEY_BACKEND=memory
+      - CONTROL_PLANE_ENABLE_BILLING=false
+    ports:
+      - "4000:4000"
+    depends_on:
+      - kernel
+
+  action-orchestrator:
+    build:
+      context: .
+      dockerfile: services/action-orchestrator/Dockerfile
+    environment:
+      - KERNEL_GRPC_URL=kernel:50051
+      - KERNEL_EVENT_TENANT_ID=__all__
+    depends_on:
+      - kernel

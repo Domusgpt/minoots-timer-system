@@ -1,0 +1,144 @@
+syntax = "proto3";
+
+package minoots.timer.v1;
+
+// Schedules a timer inside the horology kernel. Either duration_ms or fire_time must be provided.
+message TimerScheduleRequest {
+  string tenant_id = 1;
+  string requested_by = 2;
+  string name = 3;
+  oneof schedule_time {
+    uint64 duration_ms = 4;
+    string fire_time_iso = 5;
+  }
+  string action_bundle_json = 6;
+  map<string, string> labels = 7;
+  string metadata_json = 8;
+  string agent_binding_json = 9;
+}
+
+message TimerScheduleResponse {
+  Timer timer = 1;
+}
+
+message Timer {
+  string id = 1;
+  string tenant_id = 2;
+  string requested_by = 3;
+  string name = 4;
+  TimerStatus status = 5;
+  string created_at_iso = 6;
+  string fire_at_iso = 7;
+  string fired_at_iso = 8;
+  string cancelled_at_iso = 9;
+  string cancel_reason = 10;
+  string cancelled_by = 11;
+  uint64 duration_ms = 12;
+  string metadata_json = 13;
+  string action_bundle_json = 14;
+  string agent_binding_json = 15;
+  map<string, string> labels = 16;
+  ExecutionResult execution_result = 17;
+  ExecutionError execution_error = 18;
+}
+
+enum TimerStatus {
+  TIMER_STATUS_UNSPECIFIED = 0;
+  TIMER_STATUS_SCHEDULED = 1;
+  TIMER_STATUS_ARMED = 2;
+  TIMER_STATUS_FIRED = 3;
+  TIMER_STATUS_CANCELLED = 4;
+  TIMER_STATUS_FAILED = 5;
+}
+
+message TimerCancelRequest {
+  string tenant_id = 1;
+  string timer_id = 2;
+  string requested_by = 3;
+  string reason = 4;
+}
+
+message TimerGetRequest {
+  string tenant_id = 1;
+  string timer_id = 2;
+}
+
+message TimerListRequest {
+  string tenant_id = 1;
+  uint32 page_size = 2;
+  string page_token = 3;
+  repeated string statuses = 4;
+}
+
+message TimerListResponse {
+  repeated Timer timers = 1;
+  string next_page_token = 2;
+}
+
+message TimerEventStreamRequest {
+  string tenant_id = 1;
+  repeated string topics = 2; // e.g., "timer.fired", "timer.failed"
+}
+
+message TimerEvent {
+  oneof event {
+    TimerScheduled scheduled = 1;
+    TimerFired fired = 2;
+    TimerCancelled cancelled = 3;
+    TimerFailed failed = 4;
+  }
+}
+
+message TimerScheduled {
+  Timer timer = 1;
+}
+
+message TimerFired {
+  Timer timer = 1;
+  ExecutionResult result = 2;
+}
+
+message TimerCancelled {
+  Timer timer = 1;
+  string reason = 2;
+}
+
+message TimerFailed {
+  Timer timer = 1;
+  ExecutionError error = 2;
+}
+
+message ExecutionResult {
+  repeated ActionResult actions = 1;
+  string completed_at_iso = 2;
+}
+
+message ExecutionError {
+  string message = 1;
+  string code = 2;
+  string metadata_json = 3;
+}
+
+message ActionResult {
+  string action_id = 1;
+  bool success = 2;
+  string output = 3;
+  string metadata_json = 4;
+}
+
+message TimerExecutionReportRequest {
+  string tenant_id = 1;
+  string timer_id = 2;
+  TimerStatus final_status = 3;
+  ExecutionResult result = 4;
+  ExecutionError error = 5;
+}
+
+service HorologyKernel {
+  rpc ScheduleTimer (TimerScheduleRequest) returns (TimerScheduleResponse);
+  rpc CancelTimer (TimerCancelRequest) returns (Timer);
+  rpc GetTimer (TimerGetRequest) returns (Timer);
+  rpc ListTimers (TimerListRequest) returns (TimerListResponse);
+  rpc StreamTimerEvents (TimerEventStreamRequest) returns (stream TimerEvent);
+  rpc ReportTimerExecution (TimerExecutionReportRequest) returns (Timer);
+}
