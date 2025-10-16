@@ -121,6 +121,24 @@
 
 ---
 
+### Entry #6: Wave 1 – Postgres command log restart coverage - COMPLETE
+**Time:** 2025-10-19 09:00-11:15 UTC
+**Task:** Extend the kernel persistence harness so restarts validate both timer state and command log durability.
+**Status:** ✅ COMPLETE
+
+**Actions:**
+1. ✅ Booted the Postgres restore integration test with a shared `PostgresCommandLog` and asserted the kernel emits `fire` and `settle` entries after restart.
+2. ✅ Ensured the test still confirms the timer transitions to `settled` in `timer_records`, guarding against regressions in state persistence.
+3. ✅ Documented how to inspect the command log rows in the local environment guide so contributors can verify the restart workflow manually.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml`
+
+**Next Steps:**
+- Instrument the command log appends with OTEL spans and tie them into the Wave 1 observability story before enabling CI enforcement.
+
+---
+
 ### Entry #4: Wave 0 Platform Hardening - IN PROGRESS
 **Time:** 2025-10-15 18:00-23:30 UTC
 **Task:** Execute Wave 0 exit criteria for the async refactor charter (durable persistence, JetStream mesh, telemetry bootstrap)
@@ -276,3 +294,20 @@ Next update due: After auth implementation complete
 **Next Steps:**
 - Swap the in-memory `MemStore` for Postgres-backed log/state machine persistence before enabling OpenRaft in production.
 - Expose supervisor configuration through the kernel CLI and add DX docs for toggling between Postgres and OpenRaft leadership modes.
+
+### Entry #7: Wave 1 persistence restore harness - COMPLETED
+**Time:** 2025-10-18 13:40-15:05 UTC
+**Task:** Prove the horology kernel can restore active timers from Postgres and document the test prerequisites for other contributors.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Added `PostgresTimerStore::from_pool` helper and a new integration test that seeds `timer_records`, boots the kernel, and asserts fired/settled events after restart.
+2. Documented the `TEST_DATABASE_URL` requirement in `.env.example` and `docs/devx/LOCAL_ENVIRONMENT.md` so persistence tests run out of the box.
+3. Logged devlog updates capturing cross-stream impacts (HK-PERSIST-01, DX-ENV-08) and noted the remaining work to replace the OpenRaft `MemStore`.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml`
+
+**Next Steps:**
+- Replace the OpenRaft in-memory store with a durable adapter prior to enabling clustered mode in CI.
+- Add OTEL spans around command log appends and restore flow for governance auditing.

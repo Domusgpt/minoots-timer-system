@@ -16,7 +16,7 @@ pub mod grpc;
 pub mod leadership;
 pub mod persistence;
 pub mod replication;
-#[cfg(test)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod test_support;
 
 use leadership::LeaderHandle;
@@ -513,11 +513,13 @@ impl HorologyKernel {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
     use crate::persistence::TimerStore;
     use async_trait::async_trait;
 
+    #[allow(dead_code)]
     #[derive(Clone, Default)]
     struct RecordingStore {
         timers: Arc<RwLock<Vec<TimerInstance>>>,
