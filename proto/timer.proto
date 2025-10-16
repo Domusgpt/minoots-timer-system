@@ -38,6 +38,9 @@ message Timer {
   string action_bundle_json = 14;
   string agent_binding_json = 15;
   map<string, string> labels = 16;
+  string settled_at_iso = 17;
+  string failure_reason = 18;
+  uint64 state_version = 19;
 }
 
 enum TimerStatus {
@@ -47,6 +50,7 @@ enum TimerStatus {
   TIMER_STATUS_FIRED = 3;
   TIMER_STATUS_CANCELLED = 4;
   TIMER_STATUS_FAILED = 5;
+  TIMER_STATUS_SETTLED = 6;
 }
 
 message TimerCancelRequest {
@@ -83,6 +87,7 @@ message TimerEvent {
     TimerScheduled scheduled = 1;
     TimerFired fired = 2;
     TimerCancelled cancelled = 3;
+    TimerSettled settled = 4;
   }
 }
 
@@ -98,6 +103,10 @@ message TimerFired {
 message TimerCancelled {
   Timer timer = 1;
   string reason = 2;
+}
+
+message TimerSettled {
+  Timer timer = 1;
 }
 
 message ExecutionResult {
