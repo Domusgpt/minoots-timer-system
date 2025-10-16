@@ -9,6 +9,7 @@ use horology_kernel::pb::{
     timer_schedule_request, TimerCancelRequest, TimerListRequest, TimerScheduleRequest,
 };
 use horology_kernel::{HorologyKernel, SchedulerConfig};
+use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 use tonic::transport::Server;
 
@@ -37,16 +38,20 @@ async fn grpc_schedule_and_cancel_roundtrip() {
         .expect("connect to kernel");
 
     let schedule_response = client
-        .schedule_timer(tonic::Request::new(TimerScheduleRequest {
-            tenant_id: "tenant-test".into(),
-            requested_by: "agent-test".into(),
-            name: "integration".into(),
-            schedule_time: Some(timer_schedule_request::ScheduleTime::DurationMs(50)),
-            metadata_json: String::new(),
-            labels: HashMap::new(),
-            action_bundle_json: String::new(),
-            agent_binding_json: String::new(),
-        }))
+        .schedule_timer(signed_request(
+            TimerScheduleRequest {
+                tenant_id: "tenant-test".into(),
+                requested_by: "agent-test".into(),
+                name: "integration".into(),
+                schedule_time: Some(timer_schedule_request::ScheduleTime::DurationMs(50)),
+                metadata_json: String::new(),
+                labels: HashMap::new(),
+                action_bundle_json: String::new(),
+                agent_binding_json: String::new(),
+            },
+            "principal-test",
+            "tenant-test",
+        ))
         .await
         .expect("schedule response")
         .into_inner();
@@ -55,31 +60,63 @@ async fn grpc_schedule_and_cancel_roundtrip() {
     assert_eq!(timer.tenant_id, "tenant-test");
 
     let list_response = client
-        .list_timers(tonic::Request::new(TimerListRequest {
-            tenant_id: "tenant-test".into(),
-            page_size: 0,
-            page_token: String::new(),
-            statuses: vec![],
-        }))
+        .list_timers(signed_request(
+            TimerListRequest {
+                tenant_id: "tenant-test".into(),
+                page_size: 0,
+                page_token: String::new(),
+                statuses: vec![],
+            },
+            "principal-test",
+            "tenant-test",
+        ))
         .await
         .expect("list response")
         .into_inner();
     assert_eq!(list_response.timers.len(), 1);
 
     let cancel_response = client
-        .cancel_timer(tonic::Request::new(TimerCancelRequest {
-            tenant_id: "tenant-test".into(),
-            timer_id: timer.id.clone(),
-            requested_by: "agent-test".into(),
-            reason: "integration".into(),
-        }))
+        .cancel_timer(signed_request(
+            TimerCancelRequest {
+                tenant_id: "tenant-test".into(),
+                timer_id: timer.id.clone(),
+                requested_by: "agent-test".into(),
+                reason: "integration".into(),
+            },
+            "principal-test",
+            "tenant-test",
+        ))
         .await
         .expect("cancel response")
         .into_inner();
 
     assert_eq!(cancel_response.id, timer.id);
-    assert_eq!(cancel_response.status, horology_kernel::pb::TimerStatus::Cancelled as i32);
+    assert_eq!(
+        cancel_response.status,
+        horology_kernel::pb::TimerStatus::Cancelled as i32
+    );
 
     let _ = shutdown_tx.send(());
     server.await.expect("server join");
+}
+
+fn signed_request<T>(message: T, principal_id: &str, tenant_id: &str) -> tonic::Request<T> {
+    let mut request = tonic::Request::new(message);
+    let signature = Sha256::digest(format!("{principal_id}:{tenant_id}").as_bytes());
+    let metadata = request.metadata_mut();
+    metadata.insert(
+        "x-principal-id",
+        principal_id.parse().expect("principal id metadata"),
+    );
+    metadata.insert(
+        "x-tenant-id",
+        tenant_id.parse().expect("tenant id metadata"),
+    );
+    metadata.insert(
+        "x-signature",
+        format!("{:x}", signature)
+            .parse()
+            .expect("signature metadata"),
+    );
+    request
 }
