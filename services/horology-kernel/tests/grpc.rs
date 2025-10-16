@@ -78,7 +78,10 @@ async fn grpc_schedule_and_cancel_roundtrip() {
         .into_inner();
 
     assert_eq!(cancel_response.id, timer.id);
-    assert_eq!(cancel_response.status, horology_kernel::pb::TimerStatus::Cancelled as i32);
+    assert_eq!(
+        cancel_response.status,
+        horology_kernel::pb::TimerStatus::Cancelled as i32
+    );
 
     let _ = shutdown_tx.send(());
     server.await.expect("server join");
