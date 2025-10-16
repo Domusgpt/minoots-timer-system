@@ -1,7 +1,9 @@
 use horology_kernel::grpc::HorologyKernelService;
+use horology_kernel::leadership::PostgresLeaderElector;
+use horology_kernel::persistence::postgres::{PostgresCommandLog, PostgresTimerStore};
 use horology_kernel::pb::horology_kernel_server::HorologyKernelServer;
-use horology_kernel::{HorologyKernel, SchedulerConfig, TimerSpec};
-use std::{collections::HashMap, net::SocketAddr};
+use horology_kernel::{HorologyKernel, KernelRuntimeOptions, SchedulerConfig, TimerSpec};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::signal;
 use tonic::transport::Server;
 use tracing::{error, info};
@@ -11,7 +13,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     info!("Starting horology kernel");
 
-    let kernel = HorologyKernel::new(SchedulerConfig::default());
+    let kernel = build_kernel().await?;
     let mut events = kernel.subscribe();
     let grpc_addr: SocketAddr = std::env::var("KERNEL_GRPC_ADDR")
         .or_else(|_| std::env::var("KERNEL_GRPC_URL"))
@@ -66,4 +68,43 @@ async fn main() -> anyhow::Result<()> {
     info!("Shutting down horology kernel");
     event_task.abort();
     Ok(())
+}
+
+async fn build_kernel() -> anyhow::Result<HorologyKernel> {
+    let config = SchedulerConfig::default();
+    match std::env::var("KERNEL_STORE")
+        .unwrap_or_else(|_| "memory".to_string())
+        .to_lowercase()
+        .as_str()
+    {
+        "postgres" => {
+            let database_url = std::env::var("KERNEL_DATABASE_URL")
+                .or_else(|_| std::env::var("DATABASE_URL"))
+                .map_err(|_| anyhow::anyhow!(
+                    "KERNEL_DATABASE_URL or DATABASE_URL must be set when KERNEL_STORE=postgres"
+                ))?;
+            let store = PostgresTimerStore::connect(&database_url).await?;
+            let pool = store.pool();
+            let shared_store = Arc::new(store) as horology_kernel::persistence::SharedTimerStore;
+            let command_log = Arc::new(PostgresCommandLog::new(pool.clone()))
+                as horology_kernel::persistence::command_log::SharedCommandLog;
+            let leader = PostgresLeaderElector::new(pool, 42, Duration::from_secs(1))
+                .start()
+                .await?;
+            let options = KernelRuntimeOptions {
+                store: shared_store,
+                command_log: Some(command_log),
+                leader: Some(leader),
+            };
+            let kernel = HorologyKernel::with_runtime(config, options).await?;
+            tracing::info!("kernel_store" = "postgres", "Loaded horology kernel with Postgres persistence");
+            Ok(kernel)
+        }
+        other => {
+            if other != "memory" {
+                tracing::warn!(store = other, "Unknown KERNEL_STORE value, defaulting to in-memory");
+            }
+            Ok(HorologyKernel::new(config))
+        }
+    }
 }
