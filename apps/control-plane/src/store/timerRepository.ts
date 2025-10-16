@@ -5,4 +5,5 @@ export interface TimerRepository {
   update(timer: TimerRecord): Promise<TimerRecord>;
   findById(tenantId: string, id: string): Promise<TimerRecord | null>;
   list(tenantId: string): Promise<TimerRecord[]>;
+  countActive(tenantId: string): Promise<number>;
 }

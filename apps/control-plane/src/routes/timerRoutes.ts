@@ -3,6 +3,9 @@ import { ZodError } from 'zod';
 import { TimerService } from '../services/timerService';
 import { timerCancelSchema, timerCreateSchema, TimerRecord } from '../types/timer';
 import { logger } from '../telemetry/logger';
+import { AuthorizationMiddlewareFactory, getAuthContext } from '../middleware/authz';
+import { QuotaExceededError } from '../policy/quotaMonitor';
+import { PolicyError } from '../policy/policyEngine';
 
 const toResponse = (timer: TimerRecord) => ({
   id: timer.id,
@@ -31,17 +34,17 @@ const tenantFromQuery = (req: Request): string => {
   return candidate;
 };
 
-const tenantFromHeader = (req: Request): string => {
-  const candidate = req.headers['x-tenant-id'] as string | undefined;
-  if (!candidate) {
-    throw new Error('x-tenant-id header is required');
-  }
-  return candidate;
-};
-
 const handleError = (err: unknown, res: Response) => {
   if (err instanceof ZodError) {
     res.status(400).json({ message: 'Validation failed', details: err.issues });
+    return;
+  }
+  if (err instanceof QuotaExceededError) {
+    res.status(429).json({ message: err.message });
+    return;
+  }
+  if (err instanceof PolicyError) {
+    res.status(403).json({ message: err.message });
     return;
   }
 
@@ -49,38 +52,48 @@ const handleError = (err: unknown, res: Response) => {
   res.status(500).json({ message: 'Unexpected error' });
 };
 
-export const registerTimerRoutes = (app: Application, timerService: TimerService) => {
+export const registerTimerRoutes = (
+  app: Application,
+  timerService: TimerService,
+  authorization: AuthorizationMiddlewareFactory,
+) => {
   const router = express.Router();
 
-  router.post('/', async (req, res) => {
+  router.post('/', authorization('timers:create'), async (req, res) => {
     try {
+      const context = getAuthContext(req);
       const payload = timerCreateSchema.parse(req.body);
-      const headerTenant = req.headers['x-tenant-id'] as string | undefined;
-      if (headerTenant && headerTenant !== payload.tenantId) {
-        res.status(400).json({ message: 'tenantId mismatch between header and payload' });
+      if (context.tenantId !== payload.tenantId) {
+        res.status(403).json({ message: 'tenantId mismatch with credential' });
         return;
       }
-      const timer = await timerService.createTimer(payload);
+      const timer = await timerService.createTimer(context, payload);
       res.status(201).json(toResponse(timer));
     } catch (err) {
       handleError(err, res);
     }
   });
 
-  router.get('/', async (req, res) => {
+  router.get('/', authorization('timers:read'), async (req, res) => {
     try {
+      const context = getAuthContext(req);
       const tenantId = tenantFromQuery(req);
-      const timers = await timerService.listTimers(tenantId);
+      if (tenantId !== context.tenantId && tenantId !== '__all__') {
+        res.status(403).json({ message: 'Cross-tenant access is not permitted' });
+        return;
+      }
+      const timers = await timerService.listTimers(context, tenantId === '__all__' ? context.tenantId : tenantId);
       res.json(timers.map(toResponse));
     } catch (err) {
       handleError(err, res);
     }
   });
 
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', authorization('timers:read'), async (req, res) => {
     try {
-      const tenantId = tenantFromHeader(req);
-      const timer = await timerService.getTimer(tenantId, req.params.id);
+      const context = getAuthContext(req);
+      const tenantId = context.tenantId;
+      const timer = await timerService.getTimer(context, tenantId, req.params.id);
       if (!timer) {
         res.status(404).json({ message: 'Timer not found' });
         return;
@@ -91,15 +104,16 @@ export const registerTimerRoutes = (app: Application, timerService: TimerService
     }
   });
 
-  router.post('/:id/cancel', async (req, res) => {
+  router.post('/:id/cancel', authorization('timers:cancel'), async (req, res) => {
     try {
-      const tenantId = tenantFromHeader(req);
+      const context = getAuthContext(req);
+      const tenantId = context.tenantId;
       const payload = timerCancelSchema.parse(req.body);
       if (payload.tenantId !== tenantId) {
-        res.status(400).json({ message: 'tenantId mismatch between header and payload' });
+        res.status(403).json({ message: 'tenantId mismatch with credential' });
         return;
       }
-      const timer = await timerService.cancelTimer(tenantId, req.params.id, payload);
+      const timer = await timerService.cancelTimer(context, tenantId, req.params.id, payload);
       if (!timer) {
         res.status(404).json({ message: 'Timer not found' });
         return;
