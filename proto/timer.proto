@@ -82,6 +82,18 @@ message TimerEventStreamRequest {
   repeated string topics = 2; // e.g., "timer.fired", "timer.failed"
 }
 
+message TimerEventEnvelope {
+  string envelope_id = 1;
+  string tenant_id = 2;
+  string occurred_at_iso = 3;
+  string dedupe_key = 4;
+  string trace_id = 5;
+  string signature = 6;
+  string signature_version = 7;
+  string event_type = 8;
+  TimerEvent event = 9;
+}
+
 message TimerEvent {
   oneof event {
     TimerScheduled scheduled = 1;
@@ -132,5 +144,5 @@ service HorologyKernel {
   rpc CancelTimer (TimerCancelRequest) returns (Timer);
   rpc GetTimer (TimerGetRequest) returns (Timer);
   rpc ListTimers (TimerListRequest) returns (TimerListResponse);
-  rpc StreamTimerEvents (TimerEventStreamRequest) returns (stream TimerEvent);
+  rpc StreamTimerEvents (TimerEventStreamRequest) returns (stream TimerEventEnvelope);
 }
