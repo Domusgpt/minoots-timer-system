@@ -1,11 +1,11 @@
 import path from 'node:path';
-import { promisify } from 'node:util';
 
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
 import { v4 as uuid } from 'uuid';
 
-import { InMemoryTimerRepository } from '../store/inMemoryTimerRepository';
+import { TimerRepository } from '../store/timerRepository';
+import { createTimerRepository } from '../store/createTimerRepository';
 import { TimerRecord, TimerActionBundle, AgentBinding, TimerStatus } from '../types/timer';
 import { logger } from '../telemetry/logger';
 
@@ -16,12 +16,9 @@ type GrpcKernelClient = grpc.Client & {
   cancelTimer: grpc.handleUnaryCall<any, any>;
   getTimer: grpc.handleUnaryCall<any, any>;
   listTimers: grpc.handleUnaryCall<any, any>;
+  streamTimerEvents: grpc.handleServerStreamingCall<any, any>;
 };
 
-type ScheduleTimerMethod = (request: any) => Promise<any>;
-type CancelTimerMethod = (request: any) => Promise<any>;
-type GetTimerMethod = (request: any) => Promise<any>;
-type ListTimersMethod = (request: any) => Promise<any>;
 type KernelClientConstructor = new (address: string, credentials: grpc.ChannelCredentials) => GrpcKernelClient;
 
 const loaderOptions: protoLoader.Options = {
@@ -68,17 +65,34 @@ export interface TimerCancelCommand {
   reason?: string;
 }
 
+export interface KernelGatewayContext {
+  tenantId: string;
+  principalId: string;
+  traceId?: string;
+  headers: Record<string, string>;
+}
+
 export interface KernelGateway {
-  schedule(command: TimerScheduleCommand): Promise<TimerRecord>;
-  cancel(command: TimerCancelCommand): Promise<TimerRecord | null>;
-  list(tenantId: string): Promise<TimerRecord[]>;
-  get(tenantId: string, timerId: string): Promise<TimerRecord | null>;
+  schedule(command: TimerScheduleCommand, context: KernelGatewayContext): Promise<TimerRecord>;
+  cancel(command: TimerCancelCommand, context: KernelGatewayContext): Promise<TimerRecord | null>;
+  list(tenantId: string, context: KernelGatewayContext): Promise<TimerRecord[]>;
+  get(tenantId: string, timerId: string, context: KernelGatewayContext): Promise<TimerRecord | null>;
+}
+
+export class KernelNotLeaderError extends Error {
+  constructor(message = 'Timer kernel is not currently the cluster leader', public readonly retryAfterMs?: number) {
+    super(message);
+    this.name = 'KernelNotLeaderError';
+  }
 }
 
 export class InMemoryKernelGateway implements KernelGateway {
-  constructor(private readonly repository = new InMemoryTimerRepository()) {}
+  constructor(private readonly repository: TimerRepository = createTimerRepository()) {}
 
-  async schedule(command: TimerScheduleCommand): Promise<TimerRecord> {
+  async schedule(
+    command: TimerScheduleCommand,
+    _context: KernelGatewayContext,
+  ): Promise<TimerRecord> {
     const timer: TimerRecord = {
       id: uuid(),
       tenantId: command.tenantId,
@@ -96,7 +110,10 @@ export class InMemoryKernelGateway implements KernelGateway {
     return this.repository.save(timer);
   }
 
-  async cancel(command: TimerCancelCommand): Promise<TimerRecord | null> {
+  async cancel(
+    command: TimerCancelCommand,
+    _context: KernelGatewayContext,
+  ): Promise<TimerRecord | null> {
     const existing = await this.repository.findById(command.tenantId, command.timerId);
     if (!existing) {
       return null;
@@ -116,78 +133,121 @@ export class InMemoryKernelGateway implements KernelGateway {
     return this.repository.update(cancelled);
   }
 
-  async list(tenantId: string): Promise<TimerRecord[]> {
+  async list(tenantId: string, _context: KernelGatewayContext): Promise<TimerRecord[]> {
     return this.repository.list(tenantId);
   }
 
-  async get(tenantId: string, timerId: string): Promise<TimerRecord | null> {
+  async get(
+    tenantId: string,
+    timerId: string,
+    _context: KernelGatewayContext,
+  ): Promise<TimerRecord | null> {
     return this.repository.findById(tenantId, timerId);
   }
 }
 
 export class GrpcKernelGateway implements KernelGateway {
   private readonly client: GrpcKernelClient;
-  private readonly scheduleTimer: ScheduleTimerMethod;
-  private readonly cancelTimer: CancelTimerMethod;
-  private readonly getTimer: GetTimerMethod;
-  private readonly listTimers: ListTimersMethod;
 
   constructor(address: string) {
     const ClientCtor = loadKernelClientCtor();
     this.client = new ClientCtor(address, grpc.credentials.createInsecure());
-    this.scheduleTimer = promisify(this.client.scheduleTimer.bind(this.client));
-    this.cancelTimer = promisify(this.client.cancelTimer.bind(this.client));
-    this.getTimer = promisify(this.client.getTimer.bind(this.client));
-    this.listTimers = promisify(this.client.listTimers.bind(this.client));
   }
 
-  async schedule(command: TimerScheduleCommand): Promise<TimerRecord> {
-    try {
-      const request = buildScheduleRequest(command);
-      const response = await this.scheduleTimer(request);
-      return mapTimer(response?.timer);
-    } catch (error) {
-      throw normalizeGrpcError('scheduleTimer', error);
-    }
+  async schedule(command: TimerScheduleCommand, context: KernelGatewayContext): Promise<TimerRecord> {
+    const request = buildScheduleRequest(command);
+    const metadata = this.buildMetadata(context);
+    return new Promise((resolve, reject) => {
+      (this.client as any).scheduleTimer(
+        request,
+        metadata,
+        (error: grpc.ServiceError | null, response: any) => {
+          if (error) {
+            reject(normalizeGrpcError('scheduleTimer', error));
+            return;
+          }
+          resolve(mapTimer(response?.timer));
+        },
+      );
+    });
   }
 
-  async cancel(command: TimerCancelCommand): Promise<TimerRecord | null> {
-    try {
-      const response = await this.cancelTimer({
-        tenantId: command.tenantId,
-        timerId: command.timerId,
-        requestedBy: command.requestedBy,
-        reason: command.reason ?? '',
-      });
-      return mapTimer(response);
-    } catch (error) {
-      if (isGrpcNotFound(error)) {
-        return null;
-      }
-      throw normalizeGrpcError('cancelTimer', error);
-    }
+  async cancel(command: TimerCancelCommand, context: KernelGatewayContext): Promise<TimerRecord | null> {
+    const metadata = this.buildMetadata(context);
+    return new Promise((resolve, reject) => {
+      (this.client as any).cancelTimer(
+        {
+          tenantId: command.tenantId,
+          timerId: command.timerId,
+          requestedBy: command.requestedBy,
+          reason: command.reason ?? '',
+        },
+        metadata,
+        (error: grpc.ServiceError | null, response: any) => {
+          if (error) {
+            if (isGrpcNotFound(error)) {
+              resolve(null);
+              return;
+            }
+            reject(normalizeGrpcError('cancelTimer', error));
+            return;
+          }
+          resolve(mapTimer(response));
+        },
+      );
+    });
   }
 
-  async list(tenantId: string): Promise<TimerRecord[]> {
-    try {
-      const response = await this.listTimers({ tenantId });
-      const timers: unknown[] = response?.timers ?? [];
-      return timers.map((timer) => mapTimer(timer));
-    } catch (error) {
-      throw normalizeGrpcError('listTimers', error);
-    }
+  async list(tenantId: string, context: KernelGatewayContext): Promise<TimerRecord[]> {
+    const metadata = this.buildMetadata(context);
+    return new Promise((resolve, reject) => {
+      (this.client as any).listTimers(
+        { tenantId },
+        metadata,
+        (error: grpc.ServiceError | null, response: any) => {
+          if (error) {
+            reject(normalizeGrpcError('listTimers', error));
+            return;
+          }
+          const timers: unknown[] = response?.timers ?? [];
+          resolve(timers.map((timer) => mapTimer(timer)));
+        },
+      );
+    });
   }
 
-  async get(tenantId: string, timerId: string): Promise<TimerRecord | null> {
-    try {
-      const response = await this.getTimer({ tenantId, timerId });
-      return mapTimer(response);
-    } catch (error) {
-      if (isGrpcNotFound(error)) {
-        return null;
-      }
-      throw normalizeGrpcError('getTimer', error);
+  async get(tenantId: string, timerId: string, context: KernelGatewayContext): Promise<TimerRecord | null> {
+    const metadata = this.buildMetadata(context);
+    return new Promise((resolve, reject) => {
+      (this.client as any).getTimer(
+        { tenantId, timerId },
+        metadata,
+        (error: grpc.ServiceError | null, response: any) => {
+          if (error) {
+            if (isGrpcNotFound(error)) {
+              resolve(null);
+              return;
+            }
+            reject(normalizeGrpcError('getTimer', error));
+            return;
+          }
+          resolve(mapTimer(response));
+        },
+      );
+    });
+  }
+
+  private buildMetadata(context: KernelGatewayContext): grpc.Metadata {
+    const metadata = new grpc.Metadata();
+    Object.entries(context.headers).forEach(([key, value]) => {
+      metadata.set(key, value);
+    });
+    if (context.traceId) {
+      metadata.set('x-trace-id', context.traceId);
     }
+    metadata.set('x-principal-id', context.principalId);
+    metadata.set('x-tenant-id', context.tenantId);
+    return metadata;
   }
 }
 
@@ -200,131 +260,101 @@ export const createKernelGateway = (): KernelGateway => {
     return new InMemoryKernelGateway();
   }
 
-  try {
-    const gateway = new GrpcKernelGateway(grpcUrl);
-    logger.info({ grpcUrl }, 'Connected to horology kernel via gRPC');
-    return gateway;
-  } catch (error) {
-    logger.error({ error }, 'Failed to initialize gRPC kernel gateway, falling back to memory');
-    return new InMemoryKernelGateway();
-  }
+  return new GrpcKernelGateway(grpcUrl);
 };
 
-const buildScheduleRequest = (command: TimerScheduleCommand) => {
-  const scheduleTime = command.fireAt
-    ? { fireTimeIso: command.fireAt }
-    : { durationMs: command.durationMs };
-
-  return {
-    tenantId: command.tenantId,
-    requestedBy: command.requestedBy,
-    name: command.name,
-    scheduleTime,
-    labels: command.labels ?? {},
-    metadataJson: toJsonString(command.metadata),
-    actionBundleJson: toJsonString(command.actionBundle),
-    agentBindingJson: toJsonString(command.agentBinding),
-  };
-};
+const buildScheduleRequest = (command: TimerScheduleCommand) => ({
+  tenantId: command.tenantId,
+  requestedBy: command.requestedBy,
+  name: command.name,
+  scheduleTime: { durationMs: command.durationMs },
+  fireTimeIso: command.fireAt,
+  metadataJson: command.metadata ? JSON.stringify(command.metadata) : '',
+  labels: command.labels ?? {},
+  actionBundleJson: command.actionBundle ? JSON.stringify(command.actionBundle) : '',
+  agentBindingJson: command.agentBinding ? JSON.stringify(command.agentBinding) : '',
+});
 
 const mapTimer = (payload: any): TimerRecord => {
   if (!payload) {
-    throw new Error('Horology kernel did not return a timer payload');
+    throw new Error('Kernel returned empty timer payload');
   }
-
-  const status = mapStatus(payload.status);
-  const record: TimerRecord = {
+  return {
     id: payload.id,
     tenantId: payload.tenantId,
     requestedBy: payload.requestedBy,
     name: payload.name,
-    status,
-    createdAt: payload.createdAtIso ?? new Date().toISOString(),
-    fireAt: payload.fireAtIso ?? new Date().toISOString(),
+    durationMs: Number(payload.durationMs ?? payload.duration_ms ?? 0),
+    createdAt: payload.createdAtIso ?? payload.created_at_iso ?? new Date().toISOString(),
+    fireAt: payload.fireAtIso ?? payload.fire_at_iso ?? new Date().toISOString(),
+    status: mapStatus(payload.status),
+    metadata: parseJson(payload.metadataJson),
+    labels: convertStringMap(payload.labels),
+    actionBundle: parseJson(payload.actionBundleJson) as TimerActionBundle | undefined,
+    agentBinding: parseJson(payload.agentBindingJson) as AgentBinding | undefined,
     firedAt: optionalString(payload.firedAtIso),
     cancelledAt: optionalString(payload.cancelledAtIso),
     cancelReason: optionalString(payload.cancelReason),
     cancelledBy: optionalString(payload.cancelledBy),
-    durationMs: Number(payload.durationMs ?? 0),
-    metadata: parseJson(payload.metadataJson),
-    labels: convertStringMap(payload.labels) ?? {},
-    actionBundle: parseJson(payload.actionBundleJson) as TimerActionBundle | undefined,
-    agentBinding: parseJson(payload.agentBindingJson) as AgentBinding | undefined,
+    settledAt: optionalString(payload.settledAtIso),
+    failureReason: optionalString(payload.failureReason),
+    stateVersion: payload.stateVersion
+      ? Number(payload.stateVersion)
+      : payload.state_version !== undefined
+        ? Number(payload.state_version)
+        : undefined,
   };
-
-  return record;
 };
 
 const mapStatus = (status: unknown): TimerStatus => {
-  const value = typeof status === 'string' ? status : String(status ?? '');
-  switch (value) {
-    case 'TIMER_STATUS_SCHEDULED':
+  switch (status) {
     case 'scheduled':
-    case '1':
-      return 'scheduled';
-    case 'TIMER_STATUS_ARMED':
     case 'armed':
-    case '2':
-      return 'armed';
-    case 'TIMER_STATUS_FIRED':
     case 'fired':
-    case '3':
-      return 'fired';
-    case 'TIMER_STATUS_CANCELLED':
     case 'cancelled':
-    case '4':
-      return 'cancelled';
-    case 'TIMER_STATUS_FAILED':
     case 'failed':
-    case '5':
-      return 'failed';
-    case 'TIMER_STATUS_UNSPECIFIED':
-    case '0':
+    case 'settled':
+      return status;
     default:
       return 'scheduled';
   }
 };
 
-const toJsonString = (value: unknown): string => {
-  if (value === undefined || value === null) {
-    return '';
+const convertStringMap = (value: any): Record<string, string> | undefined => {
+  if (!value) {
+    return undefined;
   }
-  try {
-    return JSON.stringify(value);
-  } catch (error) {
-    logger.error({ error }, 'Failed to serialize payload to JSON');
-    return '';
-  }
+  return Object.entries(value).reduce<Record<string, string>>((acc, [key, val]) => {
+    if (typeof val === 'string') {
+      acc[key] = val;
+    }
+    return acc;
+  }, {});
 };
 
-const parseJson = <T>(value?: string): T | undefined => {
-  if (!value || value.trim().length === 0) {
+const parseJson = (value: unknown): Record<string, unknown> | undefined => {
+  if (!value) {
     return undefined;
   }
-  try {
-    return JSON.parse(value) as T;
-  } catch (error) {
-    logger.error({ error, value }, 'Failed to parse JSON payload from kernel');
-    return undefined;
+  if (typeof value === 'object') {
+    return value as Record<string, unknown>;
   }
+  if (typeof value === 'string' && value.length > 0) {
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      logger.warn({ error }, 'Failed to parse JSON payload from kernel');
+      return undefined;
+    }
+  }
+  return undefined;
 };
 
-const convertStringMap = (value: unknown): Record<string, string> | undefined => {
-  if (!value || typeof value !== 'object') {
-    return undefined;
+const optionalString = (value: unknown): string | undefined => {
+  if (typeof value === 'string' && value.length > 0) {
+    return value;
   }
-  const entries = Object.entries(value as Record<string, unknown>).reduce<Record<string, string>>(
-    (acc, [key, raw]) => {
-      if (typeof raw === 'string') {
-        acc[key] = raw;
-      } else if (raw != null) {
-        acc[key] = String(raw);
-      }
-      return acc;
-    },
-    {},
-  );
-  return Object.keys(entries).length > 0 ? entries : undefined;
+  return undefined;
 };
 
 const cloneNullable = <T>(value: T | undefined): T | undefined => {
@@ -334,21 +364,24 @@ const cloneNullable = <T>(value: T | undefined): T | undefined => {
   return JSON.parse(JSON.stringify(value));
 };
 
-const optionalString = (value?: string): string | undefined => {
-  if (!value || value.length === 0) {
-    return undefined;
+const normalizeGrpcError = (method: string, error: unknown): Error => {
+  const serviceError = error as grpc.ServiceError | undefined;
+  if (serviceError && typeof serviceError.code === 'number') {
+    if (serviceError.code === grpc.status.FAILED_PRECONDITION) {
+      const retryAfterHeader = serviceError.metadata?.get?.('retry-after-ms');
+      const retryAfterMs = Array.isArray(retryAfterHeader)
+        ? Number(retryAfterHeader[0]) || undefined
+        : Number(retryAfterHeader) || undefined;
+      return new KernelNotLeaderError(serviceError.details, retryAfterMs);
+    }
+    return serviceError;
   }
-  return value;
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error(`Kernel gRPC call ${method} failed`);
 };
 
 const isGrpcNotFound = (error: unknown): boolean => {
-  return Boolean(typeof error === 'object' && error !== null && (error as { code?: number }).code === grpc.status.NOT_FOUND);
-};
-
-const normalizeGrpcError = (method: string, error: unknown): Error => {
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    const err = error as grpc.ServiceError;
-    return new Error(`Kernel gRPC ${method} failed: ${err.message}`);
-  }
-  return new Error(`Kernel gRPC ${method} failed: ${String(error)}`);
+  return Boolean((error as grpc.ServiceError)?.code === grpc.status.NOT_FOUND);
 };
