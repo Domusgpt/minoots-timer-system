@@ -16,7 +16,6 @@ pub mod grpc;
 pub mod leadership;
 pub mod persistence;
 pub mod replication;
-#[cfg(test)]
 pub mod test_support;
 
 use leadership::LeaderHandle;
