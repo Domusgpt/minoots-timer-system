@@ -276,3 +276,20 @@ Next update due: After auth implementation complete
 **Next Steps:**
 - Swap the in-memory `MemStore` for Postgres-backed log/state machine persistence before enabling OpenRaft in production.
 - Expose supervisor configuration through the kernel CLI and add DX docs for toggling between Postgres and OpenRaft leadership modes.
+
+### Entry #7: Wave 1 persistence restore harness - COMPLETED
+**Time:** 2025-10-18 13:40-15:05 UTC
+**Task:** Prove the horology kernel can restore active timers from Postgres and document the test prerequisites for other contributors.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Added `PostgresTimerStore::from_pool` helper and a new integration test that seeds `timer_records`, boots the kernel, and asserts fired/settled events after restart.
+2. Documented the `TEST_DATABASE_URL` requirement in `.env.example` and `docs/devx/LOCAL_ENVIRONMENT.md` so persistence tests run out of the box.
+3. Logged devlog updates capturing cross-stream impacts (HK-PERSIST-01, DX-ENV-08) and noted the remaining work to replace the OpenRaft `MemStore`.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml`
+
+**Next Steps:**
+- Replace the OpenRaft in-memory store with a durable adapter prior to enabling clustered mode in CI.
+- Add OTEL spans around command log appends and restore flow for governance auditing.
