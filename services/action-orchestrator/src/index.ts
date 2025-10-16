@@ -2,6 +2,7 @@ import { createEventSource } from './infra/eventSource';
 import { executeActions } from './actions';
 import { logger } from './logger';
 import { TimerEvent } from './types';
+import { startMetricsServer } from './metrics';
 
 const handleEvent = async (event: TimerEvent): Promise<void> => {
   switch (event.type) {
@@ -23,10 +24,13 @@ const handleEvent = async (event: TimerEvent): Promise<void> => {
 const bootstrap = async () => {
   const eventSource = await createEventSource();
   await eventSource.start(handleEvent);
+  const metricsPort = parseInt(process.env.METRICS_PORT ?? '9100', 10);
+  const metricsServer = startMetricsServer(metricsPort);
 
   const shutdown = async () => {
     logger.info('Shutting down action orchestrator');
     await eventSource.stop();
+    metricsServer.close();
     process.exit(0);
   };
 

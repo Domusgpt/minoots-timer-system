@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ActionExecutor, ExecutionResult, TimerAction, TimerInstance } from '../types';
 import { logger } from '../logger';
 
-const agentCommandSchema = z.object({
+export const agentCommandSchema = z.object({
   adapter: z.enum(['mcp', 'langchain', 'autogen', 'custom']).default('mcp'),
   target: z.string().min(1),
   payload: z.record(z.any()).default({}),

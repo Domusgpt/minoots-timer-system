@@ -100,6 +100,62 @@
 
 ---
 
+### Entry #4: Wave 0 Platform Hardening - IN PROGRESS
+**Time:** 2025-10-15 18:00-23:30 UTC
+**Task:** Execute Wave 0 exit criteria for the async refactor charter (durable persistence, JetStream mesh, telemetry bootstrap)
+**Status:** 🔄 IN PROGRESS (Wave 0 complete, Wave 1 pending)
+
+**Actions:**
+1. Introduced Postgres-backed timer repository in the control plane with automated SQL migrations and OTEL-aware request middleware.
+2. Wired OpenTelemetry Node SDK (OTLP/HTTP) plus structured HTTP logging and graceful shutdown of the control plane service.
+3. Added repository bootstrap assets: `.env.example`, `docker-compose.dev.yml`, OTEL collector config, and `scripts/bootstrap-dev.sh` to orchestrate infra + migrations.
+4. Refactored the action orchestrator to consume JetStream durable consumers with DLQ publishing, including an `ensure-jetstream` provisioning script.
+5. Extended the Rust horology kernel with a persistence trait, Postgres adapter (SQLx), restoration path, and new tests covering restart hydration.
+6. Authored developer guide `docs/devx/LOCAL_ENVIRONMENT.md` describing Wave 0 bootstrap and verification steps.
+7. Wired the kernel binary to honor `KERNEL_STORE`/`KERNEL_DATABASE_URL` for Postgres without code changes.
+8. Delivered JetStream dead-letter replay utility (`scripts/replay-dead-letter.js`) and npm scripts for inspect/replay flows.
+9. Added repository automation: devlog enforcement script, infra smoke test script, and GitHub Actions CI workflow covering Node/Rust builds.
+
+**Telemetry / Artifacts:**
+- Postgres table `timer_records` via migration `0001_create_timer_records.sql`.
+- OTEL collector logs available through `docker logs minoots-otel-collector` after running the bootstrap script.
+- JetStream DLQ subject `MINOOTS_TIMER.dlq` seeded by `ensure-jetstream.js`.
+- DLQ replay output via `npm run dlq:inspect` targeting `MINOOTS_TIMER.dlq`.
+- CI workflow logs under GitHub Actions `CI` pipeline (devlog enforcement + smoke tests).
+
+**Next Steps:**
+- Stand up JetStream integration tests exercising DLQ replay and success-path fan-out.
+- Document telemetry expectations for multi-store kernel deployments and add alerting TODOs.
+- Begin Wave 1 workstreams (policy wall, Raft coordination, signed envelopes).
+
+---
+
+### Entry #5: Wave 1 Governance & Resilience - COMPLETED
+**Time:** 2025-10-16 16:00-22:30 UTC
+**Task:** Deliver Wave 1 commitments (policy enforcement, durable command log, metrics, integration harness, chaos tooling)
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Implemented control-plane policy wall with RBAC, quotas, signed kernel metadata, and gRPC gateway (REST + Connect streaming).
+2. Added Postgres-backed command log with replay on boot, leadership checks, and single-node Raft supervisor scaffold.
+3. Extended orchestrator with Prometheus metrics endpoint, retry-aware executor pipeline, and schema registry wiring.
+4. Authored developer tooling: policy/quotas guide, updated local environment runbook, Wave 1 integration harness, and chaos scripts.
+5. Expanded `.env.example` and docker guidance to surface metrics + policy variables for local + CI usage.
+
+**Telemetry / Artifacts:**
+- `apps/control-plane/src/middleware/authz.ts`, `policy/`, and `grpcServer.ts` enforce the policy wall and signed metadata.
+- `services/horology-kernel/src/command.rs`, `persistence/command_log.rs`, and `replication.rs` persist and gate commands before scheduling.
+- `services/action-orchestrator/src/metrics.ts` plus `/metrics` route and docs enabling Prometheus scraping.
+- `tests/integration/wave1.ts` harness orchestrating REST/gRPC/JetStream flows for regression runs.
+- `scripts/chaos/kernel_faults.sh` for restart + latency drills aligned with resiliency objectives.
+
+**Next Steps:**
+- Promote Raft supervisor to multi-node consensus (Phase 2 deliverable).
+- Flesh out orchestrator schema registry with additional action definitions and contract tests.
+- Automate Wave 1 harness inside CI once services can boot in pipeline.
+
+---
+
 ## 🔧 TECHNICAL DECISIONS
 
 ### Authentication Strategy
@@ -170,3 +226,20 @@ When picking up this work:
 
 Last updated by: Claude
 Next update due: After auth implementation complete
+### Entry #4: Async Refactor Program Kickoff - IN PROGRESS
+**Time:** 2025-10-15 23:00-23:15 UTC
+**Task:** Consolidate ultimate async refactor charter, establish devlog/testing system, and seed Day 0 devlog entry.
+**Status:** 🔄 IN PROGRESS
+
+**Actions:**
+1. Authored `docs/ASYNC_REFACTOR_PLAN.md` aligning architecture, development track, and execution program.
+2. Documented dev logging + testing governance in `docs/DEVLOG_AND_TESTING_SYSTEM.md`.
+3. Created `docs/devlog/2025-10-15.md` to start daily logging cadence with stream-specific updates and follow-ups.
+
+**Tests Performed:**
+- ⚠️ Formal test suites deferred pending upcoming persistence and telemetry changes.
+
+**Next Steps:**
+- Stand up docker-compose environment (DX-001) and capture first OTEL traces.
+- File backlog tickets (`CP-PERSIST-01`, `HK-PERSIST-01`, `EM-JETSTREAM-01`, etc.) and link them in devlog updates.
+- Draft ADR on persistence substrate selection before implementing storage adapters.

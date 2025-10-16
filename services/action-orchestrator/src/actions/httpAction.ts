@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ActionExecutor, ExecutionResult, TimerAction, TimerInstance } from '../types';
 import { logger } from '../logger';
 
-const httpActionSchema = z.object({
+export const httpActionSchema = z.object({
   url: z.string().url(),
   method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).default('POST'),
   headers: z.record(z.string()).default({}),

@@ -40,6 +40,20 @@ export class InMemoryTimerRepository implements TimerRepository {
       .sort((a, b) => a.fireAt.localeCompare(b.fireAt));
   }
 
+  async countActive(tenantId: string): Promise<number> {
+    const tenantStore = this.store.get(tenantId);
+    if (!tenantStore) {
+      return 0;
+    }
+    let count = 0;
+    for (const timer of tenantStore.values()) {
+      if (timer.status === 'scheduled' || timer.status === 'armed') {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   private ensureTenant(tenantId: string): Map<string, TimerRecord> {
     if (!this.store.has(tenantId)) {
       this.store.set(tenantId, new Map());

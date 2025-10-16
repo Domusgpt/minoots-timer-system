@@ -1,27 +1,42 @@
 import path from 'node:path';
-import { promisify } from 'node:util';
 
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
 import { v4 as uuid } from 'uuid';
 
-import { InMemoryTimerRepository } from '../store/inMemoryTimerRepository';
+import { TimerRepository } from '../store/timerRepository';
+import { createTimerRepository } from '../store/createTimerRepository';
 import { TimerRecord, TimerActionBundle, AgentBinding, TimerStatus } from '../types/timer';
+import { AuthContext } from '../types/auth';
+import { signKernelMetadata } from '../utils/signature';
 import { logger } from '../telemetry/logger';
 
 const DEFAULT_GRPC_URL = 'localhost:50051';
 
+export interface TimerEventStreamCommand {
+  tenantId: string;
+  topics?: string[];
+}
+
+export type KernelEventStream = grpc.ClientReadableStream<any>;
+
+type GrpcUnaryMethod = (
+  request: any,
+  metadata: grpc.Metadata,
+  callback: grpc.requestCallback<any>,
+) => grpc.ClientUnaryCall;
+
 type GrpcKernelClient = grpc.Client & {
-  scheduleTimer: grpc.handleUnaryCall<any, any>;
-  cancelTimer: grpc.handleUnaryCall<any, any>;
-  getTimer: grpc.handleUnaryCall<any, any>;
-  listTimers: grpc.handleUnaryCall<any, any>;
+  scheduleTimer: GrpcUnaryMethod;
+  cancelTimer: GrpcUnaryMethod;
+  getTimer: GrpcUnaryMethod;
+  listTimers: GrpcUnaryMethod;
+  streamTimerEvents: (
+    request: any,
+    metadata: grpc.Metadata,
+  ) => grpc.ClientReadableStream<any>;
 };
 
-type ScheduleTimerMethod = (request: any) => Promise<any>;
-type CancelTimerMethod = (request: any) => Promise<any>;
-type GetTimerMethod = (request: any) => Promise<any>;
-type ListTimersMethod = (request: any) => Promise<any>;
 type KernelClientConstructor = new (address: string, credentials: grpc.ChannelCredentials) => GrpcKernelClient;
 
 const loaderOptions: protoLoader.Options = {
@@ -69,16 +84,17 @@ export interface TimerCancelCommand {
 }
 
 export interface KernelGateway {
-  schedule(command: TimerScheduleCommand): Promise<TimerRecord>;
-  cancel(command: TimerCancelCommand): Promise<TimerRecord | null>;
-  list(tenantId: string): Promise<TimerRecord[]>;
-  get(tenantId: string, timerId: string): Promise<TimerRecord | null>;
+  schedule(command: TimerScheduleCommand, context: AuthContext): Promise<TimerRecord>;
+  cancel(command: TimerCancelCommand, context: AuthContext): Promise<TimerRecord | null>;
+  list(tenantId: string, context: AuthContext): Promise<TimerRecord[]>;
+  get(tenantId: string, timerId: string, context: AuthContext): Promise<TimerRecord | null>;
+  streamEvents(command: TimerEventStreamCommand, context: AuthContext): KernelEventStream;
 }
 
 export class InMemoryKernelGateway implements KernelGateway {
-  constructor(private readonly repository = new InMemoryTimerRepository()) {}
+  constructor(private readonly repository: TimerRepository = createTimerRepository()) {}
 
-  async schedule(command: TimerScheduleCommand): Promise<TimerRecord> {
+  async schedule(command: TimerScheduleCommand, _context: AuthContext): Promise<TimerRecord> {
     const timer: TimerRecord = {
       id: uuid(),
       tenantId: command.tenantId,
@@ -96,7 +112,7 @@ export class InMemoryKernelGateway implements KernelGateway {
     return this.repository.save(timer);
   }
 
-  async cancel(command: TimerCancelCommand): Promise<TimerRecord | null> {
+  async cancel(command: TimerCancelCommand, _context: AuthContext): Promise<TimerRecord | null> {
     const existing = await this.repository.findById(command.tenantId, command.timerId);
     if (!existing) {
       return null;
@@ -116,49 +132,55 @@ export class InMemoryKernelGateway implements KernelGateway {
     return this.repository.update(cancelled);
   }
 
-  async list(tenantId: string): Promise<TimerRecord[]> {
+  async list(tenantId: string, _context: AuthContext): Promise<TimerRecord[]> {
     return this.repository.list(tenantId);
   }
 
-  async get(tenantId: string, timerId: string): Promise<TimerRecord | null> {
+  async get(tenantId: string, timerId: string, _context: AuthContext): Promise<TimerRecord | null> {
     return this.repository.findById(tenantId, timerId);
+  }
+
+  streamEvents(_command: TimerEventStreamCommand, _context: AuthContext): KernelEventStream {
+    throw new Error('Streaming is not supported in memory mode');
   }
 }
 
 export class GrpcKernelGateway implements KernelGateway {
   private readonly client: GrpcKernelClient;
-  private readonly scheduleTimer: ScheduleTimerMethod;
-  private readonly cancelTimer: CancelTimerMethod;
-  private readonly getTimer: GetTimerMethod;
-  private readonly listTimers: ListTimersMethod;
+  private readonly scheduleTimerMethod: GrpcUnaryMethod;
+  private readonly cancelTimerMethod: GrpcUnaryMethod;
+  private readonly getTimerMethod: GrpcUnaryMethod;
+  private readonly listTimersMethod: GrpcUnaryMethod;
 
-  constructor(address: string) {
+  constructor(address: string, private readonly signingSecret: string) {
     const ClientCtor = loadKernelClientCtor();
     this.client = new ClientCtor(address, grpc.credentials.createInsecure());
-    this.scheduleTimer = promisify(this.client.scheduleTimer.bind(this.client));
-    this.cancelTimer = promisify(this.client.cancelTimer.bind(this.client));
-    this.getTimer = promisify(this.client.getTimer.bind(this.client));
-    this.listTimers = promisify(this.client.listTimers.bind(this.client));
+    this.scheduleTimerMethod = this.client.scheduleTimer.bind(this.client);
+    this.cancelTimerMethod = this.client.cancelTimer.bind(this.client);
+    this.getTimerMethod = this.client.getTimer.bind(this.client);
+    this.listTimersMethod = this.client.listTimers.bind(this.client);
   }
 
-  async schedule(command: TimerScheduleCommand): Promise<TimerRecord> {
+  async schedule(command: TimerScheduleCommand, context: AuthContext): Promise<TimerRecord> {
     try {
       const request = buildScheduleRequest(command);
-      const response = await this.scheduleTimer(request);
+      const metadata = this.createMetadata(context, { action: 'schedule', timerName: command.name });
+      const response = await this.invokeUnary(this.scheduleTimerMethod, request, metadata);
       return mapTimer(response?.timer);
     } catch (error) {
       throw normalizeGrpcError('scheduleTimer', error);
     }
   }
 
-  async cancel(command: TimerCancelCommand): Promise<TimerRecord | null> {
+  async cancel(command: TimerCancelCommand, context: AuthContext): Promise<TimerRecord | null> {
     try {
-      const response = await this.cancelTimer({
+      const metadata = this.createMetadata(context, { action: 'cancel', timerId: command.timerId });
+      const response = await this.invokeUnary(this.cancelTimerMethod, {
         tenantId: command.tenantId,
         timerId: command.timerId,
         requestedBy: command.requestedBy,
         reason: command.reason ?? '',
-      });
+      }, metadata);
       return mapTimer(response);
     } catch (error) {
       if (isGrpcNotFound(error)) {
@@ -168,9 +190,10 @@ export class GrpcKernelGateway implements KernelGateway {
     }
   }
 
-  async list(tenantId: string): Promise<TimerRecord[]> {
+  async list(tenantId: string, context: AuthContext): Promise<TimerRecord[]> {
     try {
-      const response = await this.listTimers({ tenantId });
+      const metadata = this.createMetadata(context, { action: 'list', tenantId });
+      const response = await this.invokeUnary(this.listTimersMethod, { tenantId }, metadata);
       const timers: unknown[] = response?.timers ?? [];
       return timers.map((timer) => mapTimer(timer));
     } catch (error) {
@@ -178,9 +201,10 @@ export class GrpcKernelGateway implements KernelGateway {
     }
   }
 
-  async get(tenantId: string, timerId: string): Promise<TimerRecord | null> {
+  async get(tenantId: string, timerId: string, context: AuthContext): Promise<TimerRecord | null> {
     try {
-      const response = await this.getTimer({ tenantId, timerId });
+      const metadata = this.createMetadata(context, { action: 'get', timerId });
+      const response = await this.invokeUnary(this.getTimerMethod, { tenantId, timerId }, metadata);
       return mapTimer(response);
     } catch (error) {
       if (isGrpcNotFound(error)) {
@@ -189,11 +213,49 @@ export class GrpcKernelGateway implements KernelGateway {
       throw normalizeGrpcError('getTimer', error);
     }
   }
+
+  streamEvents(command: TimerEventStreamCommand, context: AuthContext): KernelEventStream {
+    const metadata = this.createMetadata(context, { action: 'stream', tenantId: command.tenantId });
+    const request = {
+      tenantId: command.tenantId,
+      topics: command.topics ?? [],
+    };
+    return this.client.streamTimerEvents(request, metadata);
+  }
+
+  private invokeUnary(method: GrpcUnaryMethod, request: any, metadata: grpc.Metadata): Promise<any> {
+    return new Promise((resolve, reject) => {
+      method(request, metadata, (err, response) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(response);
+      });
+    });
+  }
+
+  private createMetadata(context: AuthContext, payload: Record<string, unknown>): grpc.Metadata {
+    const metadata = new grpc.Metadata();
+    metadata.set('x-tenant-id', context.tenantId);
+    metadata.set('x-principal-id', context.principalId);
+    metadata.set('x-key-id', context.keyId);
+    metadata.set('x-roles', context.roles.join(','));
+    metadata.set('x-request-id', context.requestId);
+    if (context.traceId) {
+      metadata.set('x-trace-id', context.traceId);
+    }
+    const envelope = signKernelMetadata(this.signingSecret, context, payload);
+    metadata.set('x-signed-at', envelope.issuedAt);
+    metadata.set('x-signature', envelope.signature);
+    return metadata;
+  }
 }
 
-export const createKernelGateway = (): KernelGateway => {
+export const createKernelGateway = (options?: { signingSecret?: string }): KernelGateway => {
   const grpcUrl = process.env.KERNEL_GRPC_URL || process.env.KERNEL_GRPC_ADDR || DEFAULT_GRPC_URL;
   const mode = process.env.KERNEL_GATEWAY_MODE ?? 'grpc';
+  const signingSecret = options?.signingSecret ?? process.env.POLICY_SIGNING_SECRET ?? 'development-secret';
 
   if (mode === 'memory') {
     logger.warn('Using in-memory kernel gateway (KERNEL_GATEWAY_MODE=memory)');
@@ -201,7 +263,7 @@ export const createKernelGateway = (): KernelGateway => {
   }
 
   try {
-    const gateway = new GrpcKernelGateway(grpcUrl);
+    const gateway = new GrpcKernelGateway(grpcUrl, signingSecret);
     logger.info({ grpcUrl }, 'Connected to horology kernel via gRPC');
     return gateway;
   } catch (error) {

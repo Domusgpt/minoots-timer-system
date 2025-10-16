@@ -4,11 +4,17 @@ use futures_core::Stream;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tonic::{Request, Response, Status};
 
-use crate::pb::horology_kernel_server::{HorologyKernel as HorologyKernelApi, HorologyKernelServer};
-use crate::pb::{self, TimerCancelRequest, TimerEventStreamRequest, TimerGetRequest, TimerListRequest, TimerScheduleRequest};
+use crate::pb::horology_kernel_server::{
+    HorologyKernel as HorologyKernelApi, HorologyKernelServer,
+};
+use crate::pb::{
+    self, TimerCancelRequest, TimerEventStreamRequest, TimerGetRequest, TimerListRequest,
+    TimerScheduleRequest,
+};
 use crate::{HorologyKernel, KernelError, TimerEvent, TimerInstance, TimerSpec, TimerStatus};
 
-pub type TimerEventStream = Pin<Box<dyn Stream<Item = Result<pb::TimerEvent, Status>> + Send + 'static>>;
+pub type TimerEventStream =
+    Pin<Box<dyn Stream<Item = Result<pb::TimerEvent, Status>> + Send + 'static>>;
 
 #[derive(Clone)]
 pub struct HorologyKernelService {
@@ -53,8 +59,14 @@ impl HorologyKernelApi for HorologyKernelService {
 
         let result = self
             .kernel
-            .cancel(&payload.tenant_id, id, optional_string(payload.reason), optional_string(payload.requested_by))
-            .await;
+            .cancel(
+                &payload.tenant_id,
+                id,
+                optional_string(payload.reason),
+                optional_string(payload.requested_by),
+            )
+            .await
+            .map_err(map_kernel_error)?;
 
         match result {
             Some(timer) => Ok(Response::new(to_proto_timer(timer)?)),
@@ -111,16 +123,18 @@ impl HorologyKernelApi for HorologyKernelService {
         };
 
         let receiver = self.kernel.subscribe();
-        let stream = BroadcastStream::new(receiver)
-            .filter_map(move |event| match event {
-                Ok(event)
-                    if tenant_filter
-                        .as_ref()
-                        .map(|tenant| event_belongs_to_tenant(&event, tenant))
-                        .unwrap_or(true) => Some(event_to_proto(event)),
-                Ok(_) => None,
-                Err(_) => Some(Err(Status::aborted("event channel closed"))),
-            });
+        let stream = BroadcastStream::new(receiver).filter_map(move |event| match event {
+            Ok(event)
+                if tenant_filter
+                    .as_ref()
+                    .map(|tenant| event_belongs_to_tenant(&event, tenant))
+                    .unwrap_or(true) =>
+            {
+                Some(event_to_proto(event))
+            }
+            Ok(_) => None,
+            Err(_) => Some(Err(Status::aborted("event channel closed"))),
+        });
 
         Ok(Response::new(Box::pin(stream)))
     }
@@ -137,7 +151,9 @@ fn convert_schedule_request(request: TimerScheduleRequest) -> Result<TimerSpec, 
     let (duration_ms, fire_at) = match request.schedule_time {
         Some(pb::timer_schedule_request::ScheduleTime::DurationMs(duration)) => {
             if duration == 0 {
-                return Err(Status::invalid_argument("duration_ms must be greater than zero"));
+                return Err(Status::invalid_argument(
+                    "duration_ms must be greater than zero",
+                ));
             }
             (duration, None)
         }
@@ -191,14 +207,8 @@ fn to_proto_timer(timer: TimerInstance) -> Result<pb::Timer, Status> {
         status: status_to_proto(timer.status) as i32,
         created_at_iso: format_datetime(timer.created_at),
         fire_at_iso: format_datetime(timer.fire_at),
-        fired_at_iso: timer
-            .fired_at
-            .map(format_datetime)
-            .unwrap_or_default(),
-        cancelled_at_iso: timer
-            .cancelled_at
-            .map(format_datetime)
-            .unwrap_or_default(),
+        fired_at_iso: timer.fired_at.map(format_datetime).unwrap_or_default(),
+        cancelled_at_iso: timer.cancelled_at.map(format_datetime).unwrap_or_default(),
         cancel_reason: timer.cancel_reason.unwrap_or_default(),
         cancelled_by: timer.cancelled_by.unwrap_or_default(),
         duration_ms: timer.duration_ms,
@@ -250,8 +260,12 @@ fn event_belongs_to_tenant(event: &TimerEvent, tenant_id: &str) -> bool {
 
 fn map_kernel_error(error: KernelError) -> Status {
     match error {
-        KernelError::InvalidDuration => Status::invalid_argument("duration must be greater than zero"),
+        KernelError::InvalidDuration => {
+            Status::invalid_argument("duration must be greater than zero")
+        }
         KernelError::InvalidFireTime => Status::invalid_argument("fire_at must be in the future"),
+        KernelError::Persistence(inner) => Status::internal(format!("persistence error: {inner}")),
+        KernelError::NotLeader => Status::failed_precondition("kernel node is not the leader"),
     }
 }
 

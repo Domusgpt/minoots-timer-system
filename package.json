@@ -10,7 +10,8 @@
     "dev": "nodemon independent-timer.js",
     "lint": "eslint .",
     "docs": "typedoc",
-    "deploy": "firebase deploy"
+    "deploy": "firebase deploy",
+    "test:wave1": "ts-node tests/integration/wave1.ts"
   },
   "keywords": [
     "timer",
@@ -53,7 +54,11 @@
     "nodemon": "^3.0.2",
     "eslint": "^8.55.0",
     "typedoc": "^0.25.4",
-    "@types/jest": "^29.5.8"
+    "@types/jest": "^29.5.8",
+    "@grpc/grpc-js": "^1.11.1",
+    "@grpc/proto-loader": "^0.7.13",
+    "nats": "^2.21.0",
+    "ts-node": "^10.9.2"
   },
   "jest": {
     "testEnvironment": "node",
