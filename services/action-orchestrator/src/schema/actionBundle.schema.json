@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://minoots.dev/schemas/action-bundle.json",
+  "title": "TimerActionBundle",
+  "type": "object",
+  "required": ["actions"],
+  "additionalProperties": false,
+  "properties": {
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": {
+            "type": "string",
+            "enum": ["webhook", "command", "agent_prompt", "workflow_event"]
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": true,
+            "default": {}
+          },
+          "escalation": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "afterAttempts": { "type": "integer", "minimum": 1 },
+              "escalatesTo": { "$ref": "#/properties/actions/items" }
+            }
+          }
+        }
+      }
+    },
+    "concurrency": { "type": "integer", "minimum": 1, "default": 1 },
+    "retryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxAttempts": { "type": "integer", "minimum": 1, "default": 1 },
+        "backoffInitialMs": { "type": "integer", "minimum": 0, "default": 1000 },
+        "backoffMultiplier": { "type": "number", "exclusiveMinimum": 0, "default": 2 }
+      }
+    }
+  }
+}
