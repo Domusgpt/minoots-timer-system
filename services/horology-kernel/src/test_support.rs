@@ -1,4 +1,3 @@
-#[cfg(test)]
 pub mod postgres {
     use std::time::Duration;
 

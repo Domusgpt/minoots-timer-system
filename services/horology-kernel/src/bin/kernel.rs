@@ -129,6 +129,7 @@ async fn build_kernel() -> anyhow::Result<(
                     election_timeout_min_ms: election_min,
                     election_timeout_max_ms: election_max,
                     heartbeat_interval_ms: heartbeat,
+                    storage_pool: Some(pool.clone()),
                 })
                 .await
                 {

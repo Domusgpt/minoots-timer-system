@@ -23,7 +23,7 @@ Use the shared bootstrap script to start Postgres, NATS JetStream, and the OpenT
 
 The script performs the following steps:
 1. `docker compose -f docker-compose.dev.yml up -d`
-2. `npm run db:migrate` within `apps/control-plane`
+2. `npm run db:migrate` within `apps/control-plane` (creates timer + raft persistence tables including `kernel_raft_log` and `kernel_raft_metadata`)
 3. `npm run policy:seed` within `apps/control-plane` (ensures tenants, API keys, and quotas)
 4. `node services/action-orchestrator/scripts/ensure-jetstream.js`
 
@@ -118,6 +118,20 @@ npm run dlq:inspect # or dlq:replay
   ```bash
   docker exec -it minoots-postgres psql -U minoots -d minoots -c "SELECT id, tenant_id, status FROM timer_records;"
   ```
+- Verify Raft durability by inspecting `kernel_raft_log` and the metadata snapshot:
+
+  ```bash
+  docker exec -it minoots-postgres psql -U minoots -d minoots \
+    -c "SELECT log_index, entry FROM kernel_raft_log ORDER BY log_index;"
+  docker exec -it minoots-postgres psql -U minoots -d minoots \
+    -c "SELECT vote, committed, snapshot_meta FROM kernel_raft_metadata;"
+  ```
+- Confirm OTEL spans are flowing for raft persistence by tailing the collector logs and
+  filtering for the `horology.kernel.raft.*` span names:
+
+  ```bash
+  docker logs minoots-otel-collector | grep "horology.kernel.raft"
+  ```
 - Use `nats stream view MINOOTS_TIMER` to verify JetStream subjects and DLQ messages.
 
 ## 7. Cleanup
@@ -128,3 +142,26 @@ docker compose -f docker-compose.dev.yml down
 ```
 
 This environment baseline satisfies the Wave 0 exit criteria: durable timers in Postgres, JetStream fan-out, and OTEL traces collected locally.
+
+## 8. Postgres-backed test harness
+
+Kernel tests that exercise Postgres persistence (command log + restore flows) expect a `TEST_DATABASE_URL`
+to be present. Copy the connection string from `.env` or `.env.example` and export it before running
+`cargo test` so SQLx can migrate and reuse the same containerized database:
+
+```bash
+export TEST_DATABASE_URL=postgres://minoots:development@localhost:5432/minoots
+cargo test --manifest-path services/horology-kernel/Cargo.toml
+```
+
+The helper in `services/horology-kernel/src/test_support.rs` falls back to `DATABASE_URL` if the test-specific
+variable is not set, but defining `TEST_DATABASE_URL` keeps local development isolated from any other Postgres
+instances you may have running.
+
+The restart harness also verifies that the Postgres command log captures lifecycle events after a kernel reboot.
+Inspect the entries with psql to confirm both the `fire` and `settle` commands were recorded for the restored timer:
+
+```bash
+docker exec -it minoots-postgres psql -U minoots -d minoots \
+  -c "SELECT command, timer_id, tenant_id FROM timer_command_log ORDER BY id;"
+```
