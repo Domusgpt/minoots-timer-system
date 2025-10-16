@@ -86,7 +86,7 @@ export type TimerAction = z.infer<typeof timerActionSchema>;
 export type TimerActionBundle = z.infer<typeof timerActionBundleSchema>;
 export type AgentBinding = z.infer<typeof agentBindingSchema>;
 
-export type TimerStatus = 'scheduled' | 'armed' | 'fired' | 'cancelled' | 'failed';
+export type TimerStatus = 'scheduled' | 'armed' | 'fired' | 'cancelled' | 'failed' | 'settled';
 
 export interface TimerRecord {
   id: string;
@@ -105,4 +105,7 @@ export interface TimerRecord {
   cancelledAt?: string;
   cancelReason?: string;
   cancelledBy?: string;
+  settledAt?: string;
+  failureReason?: string;
+  stateVersion?: number;
 }
