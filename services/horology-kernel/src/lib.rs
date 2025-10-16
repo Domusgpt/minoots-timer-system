@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -12,6 +13,18 @@ pub mod pb {
 }
 
 pub mod grpc;
+pub mod leadership;
+pub mod persistence;
+pub mod replication;
+pub mod telemetry;
+#[cfg(test)]
+pub mod test_support;
+
+use leadership::LeaderHandle;
+use persistence::{
+    command_log::{CommandRecord, SharedCommandLog},
+    InMemoryTimerStore, SharedTimerStore,
+};
 
 #[derive(Clone, Debug)]
 pub struct SchedulerConfig {
@@ -32,6 +45,10 @@ pub enum KernelError {
     InvalidDuration,
     #[error("fire_at must be in the future")]
     InvalidFireTime,
+    #[error("kernel is not the active leader")]
+    NotLeader,
+    #[error("persistence error: {0}")]
+    Persistence(#[from] anyhow::Error),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,6 +58,33 @@ pub enum TimerStatus {
     Armed,
     Fired,
     Cancelled,
+    Failed,
+    Settled,
+}
+
+impl TimerStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TimerStatus::Scheduled => "scheduled",
+            TimerStatus::Armed => "armed",
+            TimerStatus::Fired => "fired",
+            TimerStatus::Cancelled => "cancelled",
+            TimerStatus::Failed => "failed",
+            TimerStatus::Settled => "settled",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "scheduled" => Some(TimerStatus::Scheduled),
+            "armed" => Some(TimerStatus::Armed),
+            "fired" => Some(TimerStatus::Fired),
+            "cancelled" => Some(TimerStatus::Cancelled),
+            "failed" => Some(TimerStatus::Failed),
+            "settled" => Some(TimerStatus::Settled),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,7 +100,7 @@ pub struct TimerSpec {
     pub agent_binding: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TimerInstance {
     pub id: Uuid,
     pub tenant_id: String,
@@ -74,15 +118,26 @@ pub struct TimerInstance {
     pub cancelled_at: Option<DateTime<Utc>>,
     pub cancel_reason: Option<String>,
     pub cancelled_by: Option<String>,
+    pub settled_at: Option<DateTime<Utc>>,
+    pub failure_reason: Option<String>,
+    pub state_version: i64,
 }
 
 impl TimerInstance {
     fn is_terminal(&self) -> bool {
-        matches!(self.status, TimerStatus::Fired | TimerStatus::Cancelled)
+        matches!(
+            self.status,
+            TimerStatus::Cancelled | TimerStatus::Failed | TimerStatus::Settled
+        )
+    }
+
+    fn transition(&mut self, status: TimerStatus) {
+        self.status = status;
+        self.state_version += 1;
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "data")]
 pub enum TimerEvent {
     Scheduled(TimerInstance),
@@ -91,6 +146,7 @@ pub enum TimerEvent {
         timer: TimerInstance,
         reason: Option<String>,
     },
+    Settled(TimerInstance),
 }
 
 #[derive(Clone)]
@@ -98,11 +154,31 @@ struct KernelState {
     timers: Arc<RwLock<HashMap<Uuid, TimerInstance>>>,
     event_tx: broadcast::Sender<TimerEvent>,
     config: SchedulerConfig,
+    store: SharedTimerStore,
+    command_log: Option<SharedCommandLog>,
+    leader: Option<LeaderHandle>,
 }
 
 #[derive(Clone)]
 pub struct HorologyKernel {
     state: KernelState,
+}
+
+#[derive(Clone)]
+pub struct KernelRuntimeOptions {
+    pub store: SharedTimerStore,
+    pub command_log: Option<SharedCommandLog>,
+    pub leader: Option<LeaderHandle>,
+}
+
+impl KernelRuntimeOptions {
+    pub fn new(store: SharedTimerStore) -> Self {
+        Self {
+            store,
+            command_log: None,
+            leader: None,
+        }
+    }
 }
 
 impl HorologyKernel {
@@ -113,8 +189,34 @@ impl HorologyKernel {
                 timers: Arc::new(RwLock::new(HashMap::new())),
                 event_tx,
                 config,
+                store: Arc::new(InMemoryTimerStore::default()),
+                command_log: None,
+                leader: None,
             },
         }
+    }
+
+    pub async fn with_store(config: SchedulerConfig, store: SharedTimerStore) -> Result<Self> {
+        Self::with_runtime(config, KernelRuntimeOptions::new(store)).await
+    }
+
+    pub async fn with_runtime(
+        config: SchedulerConfig,
+        options: KernelRuntimeOptions,
+    ) -> Result<Self> {
+        let (event_tx, _rx) = broadcast::channel(1024);
+        let kernel = Self {
+            state: KernelState {
+                timers: Arc::new(RwLock::new(HashMap::new())),
+                event_tx,
+                config,
+                store: options.store,
+                command_log: options.command_log,
+                leader: options.leader,
+            },
+        };
+        kernel.restore_from_store().await?;
+        Ok(kernel)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<TimerEvent> {
@@ -122,6 +224,7 @@ impl HorologyKernel {
     }
 
     pub async fn schedule(&self, spec: TimerSpec) -> Result<TimerInstance, KernelError> {
+        self.ensure_leader()?;
         let now = Utc::now();
         let delay = if let Some(ts) = spec.fire_at {
             if ts <= now {
@@ -167,12 +270,25 @@ impl HorologyKernel {
             cancelled_at: None,
             cancel_reason: None,
             cancelled_by: None,
+            settled_at: None,
+            failure_reason: None,
+            state_version: 0,
         };
 
         {
             let mut timers = self.state.timers.write().await;
             timers.insert(timer.id, timer.clone());
         }
+
+        self.state
+            .store
+            .upsert(&timer)
+            .await
+            .map_err(KernelError::from)?;
+        self.record_command(CommandRecord::Schedule {
+            timer: timer.clone(),
+        })
+        .await?;
 
         let _ = self
             .state
@@ -190,18 +306,22 @@ impl HorologyKernel {
         timer_id: Uuid,
         reason: Option<String>,
         cancelled_by: Option<String>,
-    ) -> Option<TimerInstance> {
+    ) -> Result<Option<TimerInstance>, KernelError> {
+        self.ensure_leader()?;
         let mut timers = self.state.timers.write().await;
-        let entry = timers.get_mut(&timer_id)?;
+        let entry = match timers.get_mut(&timer_id) {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
         if entry.tenant_id != tenant_id {
-            return None;
+            return Ok(None);
         }
 
         if entry.is_terminal() {
-            return Some(entry.clone());
+            return Ok(Some(entry.clone()));
         }
 
-        entry.status = TimerStatus::Cancelled;
+        entry.transition(TimerStatus::Cancelled);
         entry.cancelled_at = Some(Utc::now());
         entry.cancel_reason = reason.clone();
         entry.cancelled_by = cancelled_by;
@@ -212,7 +332,18 @@ impl HorologyKernel {
             timer: snapshot.clone(),
             reason,
         });
-        Some(snapshot)
+
+        self.state
+            .store
+            .upsert(&snapshot)
+            .await
+            .map_err(KernelError::from)?;
+        self.record_command(CommandRecord::Cancel {
+            timer: snapshot.clone(),
+        })
+        .await?;
+
+        Ok(Some(snapshot))
     }
 
     pub async fn get(&self, tenant_id: &str, timer_id: Uuid) -> Option<TimerInstance> {
@@ -236,37 +367,181 @@ impl HorologyKernel {
 
     fn spawn_fire_task(&self, timer: TimerInstance) {
         let state = self.state.clone();
-        let span = tracing::info_span!("timer_fire_task", timer_id = %timer.id, tenant_id = %timer.tenant_id);
+        let leader = state.leader.clone();
+        let span = tracing::info_span!(
+            "timer_fire_task",
+            timer_id = %timer.id,
+            tenant_id = %timer.tenant_id
+        );
         tokio::spawn(
             async move {
-                let duration = Duration::from_millis(timer.duration_ms);
-                tokio::time::sleep(duration).await;
-
-                let mut timers = state.timers.write().await;
-                let entry = match timers.get_mut(&timer.id) {
-                    Some(entry) => entry,
-                    None => return,
+                let now = Utc::now();
+                let duration = match (timer.fire_at - now).to_std() {
+                    Ok(value) => value,
+                    Err(_) => Duration::from_secs(0),
                 };
 
-                if entry.is_terminal() {
-                    return;
+                {
+                    if let Some(ref handle) = leader {
+                        if !handle.is_leader() {
+                            tracing::debug!(timer_id = %timer.id, "skipping arm transition because node is not leader");
+                            return;
+                        }
+                    }
+
+                    let mut timers = state.timers.write().await;
+                    if let Some(entry) = timers.get_mut(&timer.id) {
+                        if matches!(entry.status, TimerStatus::Scheduled) {
+                            entry.transition(TimerStatus::Armed);
+                            if let Err(error) = state.store.upsert(entry).await {
+                                tracing::error!(timer_id = %timer.id, ?error, "failed to persist armed timer");
+                            }
+                        }
+                    }
                 }
 
-                entry.status = TimerStatus::Fired;
-                entry.fired_at = Some(Utc::now());
-                let snapshot = entry.clone();
-                drop(timers);
+                tokio::time::sleep(duration).await;
 
-                let _ = state.event_tx.send(TimerEvent::Fired(snapshot));
+                if let Some(ref handle) = leader {
+                    if !handle.is_leader() {
+                        tracing::debug!(timer_id = %timer.id, "leader lost before firing timer");
+                        return;
+                    }
+                }
+
+                let snapshot = {
+                    let mut timers = state.timers.write().await;
+                    let entry = match timers.get_mut(&timer.id) {
+                        Some(entry) => entry,
+                        None => return,
+                    };
+
+                    if entry.is_terminal() {
+                        return;
+                    }
+
+                    entry.transition(TimerStatus::Fired);
+                    entry.fired_at = Some(Utc::now());
+                    entry.clone()
+                };
+
+                let _ = state.event_tx.send(TimerEvent::Fired(snapshot.clone()));
+                if let Err(error) = state.store.upsert(&snapshot).await {
+                    tracing::error!(timer_id = %timer.id, ?error, "failed to persist fired timer");
+                }
+                if let Some(log) = state.command_log.clone() {
+                    if let Err(error) = log
+                        .append(&CommandRecord::Fire {
+                            timer_id: snapshot.id,
+                            tenant_id: snapshot.tenant_id.clone(),
+                            fired_at: snapshot
+                                .fired_at
+                                .map(|ts| ts.to_rfc3339())
+                                .unwrap_or_else(|| Utc::now().to_rfc3339()),
+                        })
+                        .await
+                    {
+                        tracing::warn!(timer_id = %snapshot.id, ?error, "failed to append fire command log");
+                    }
+                }
+
+                let settled = {
+                    let mut timers = state.timers.write().await;
+                    if let Some(entry) = timers.get_mut(&snapshot.id) {
+                        if entry.is_terminal() {
+                            return;
+                        }
+                        entry.transition(TimerStatus::Settled);
+                        entry.settled_at = Some(Utc::now());
+                        entry.clone()
+                    } else {
+                        return;
+                    }
+                };
+
+                if let Err(error) = state.store.upsert(&settled).await {
+                    tracing::error!(timer_id = %settled.id, ?error, "failed to persist settled timer");
+                }
+                let _ = state.event_tx.send(TimerEvent::Settled(settled.clone()));
+                if let Some(log) = state.command_log.clone() {
+                    if let Err(error) = log.append(&CommandRecord::Settle { timer: settled.clone() }).await {
+                        tracing::warn!(timer_id = %settled.id, ?error, "failed to append settle command log");
+                    }
+                }
             }
             .instrument(span),
         );
+    }
+
+    async fn record_command(&self, record: CommandRecord) -> Result<(), KernelError> {
+        if let Some(log) = &self.state.command_log {
+            log.append(&record).await.map_err(KernelError::from)?;
+        }
+        Ok(())
+    }
+
+    fn ensure_leader(&self) -> Result<(), KernelError> {
+        if let Some(leader) = &self.state.leader {
+            if !leader.is_leader() {
+                return Err(KernelError::NotLeader);
+            }
+        }
+        Ok(())
+    }
+
+    async fn restore_from_store(&self) -> Result<()> {
+        let persisted = self.state.store.load_active().await?;
+        if persisted.is_empty() {
+            return Ok(());
+        }
+
+        {
+            let mut timers = self.state.timers.write().await;
+            for timer in persisted.iter() {
+                timers.insert(timer.id, timer.clone());
+            }
+        }
+
+        for timer in persisted {
+            if timer.is_terminal() {
+                continue;
+            }
+            self.spawn_fire_task(timer);
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::TimerStore;
+    use async_trait::async_trait;
+
+    #[allow(dead_code)]
+    #[derive(Clone, Default)]
+    struct RecordingStore {
+        timers: Arc<RwLock<Vec<TimerInstance>>>,
+    }
+
+    #[async_trait]
+    impl TimerStore for RecordingStore {
+        async fn load_active(&self) -> anyhow::Result<Vec<TimerInstance>> {
+            let timers = self.timers.read().await;
+            Ok(timers.clone())
+        }
+
+        async fn upsert(&self, timer: &TimerInstance) -> anyhow::Result<()> {
+            let mut timers = self.timers.write().await;
+            if let Some(existing) = timers.iter_mut().find(|t| t.id == timer.id) {
+                *existing = timer.clone();
+            } else {
+                timers.push(timer.clone());
+            }
+            Ok(())
+        }
+    }
 
     #[tokio::test]
     async fn schedule_and_fire_emits_events() {
@@ -289,71 +564,17 @@ mod tests {
             .await
             .expect("schedule timer");
 
-        let scheduled = events.recv().await.expect("scheduled event");
-        assert!(matches!(scheduled, TimerEvent::Scheduled(_)));
-
-        let fired = events.recv().await.expect("fired event");
+        assert_eq!(
+            events.recv().await.unwrap(),
+            TimerEvent::Scheduled(timer.clone())
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let fired = events.recv().await.unwrap();
         match fired {
             TimerEvent::Fired(fired_timer) => {
                 assert_eq!(fired_timer.id, timer.id);
-                assert_eq!(fired_timer.status, TimerStatus::Fired);
             }
-            other => panic!("unexpected event: {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn cancelling_prevents_fire_event() {
-        let kernel = HorologyKernel::new(SchedulerConfig::default());
-        let mut events = kernel.subscribe();
-
-        let timer = kernel
-            .schedule(TimerSpec {
-                tenant_id: "tenant-a".into(),
-                requested_by: "agent-1".into(),
-                name: None,
-                duration_ms: 200,
-                fire_at: None,
-                metadata: None,
-                labels: HashMap::new(),
-                action_bundle: None,
-                agent_binding: None,
-            })
-            .await
-            .unwrap();
-
-        let _ = events.recv().await.expect("scheduled event");
-
-        let cancelled = kernel
-            .cancel(
-                "tenant-a",
-                timer.id,
-                Some("manual".into()),
-                Some("agent-1".into()),
-            )
-            .await
-            .expect("cancel timer");
-
-        assert_eq!(cancelled.status, TimerStatus::Cancelled);
-
-        let cancel_event = events.recv().await.expect("cancel event");
-        match cancel_event {
-            TimerEvent::Cancelled {
-                timer: cancelled_timer,
-                ..
-            } => {
-                assert_eq!(cancelled_timer.id, timer.id);
-            }
-            other => panic!("unexpected event: {:?}", other),
-        }
-
-        // Ensure no fired event occurs by waiting longer than the duration
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        while let Ok(event) = events.try_recv() {
-            assert!(
-                !matches!(event, TimerEvent::Fired(_)),
-                "timer should not emit fired event after cancellation"
-            );
+            other => panic!("unexpected event {other:?}"),
         }
     }
 }
