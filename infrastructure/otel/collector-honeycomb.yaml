@@ -1,0 +1,34 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+      http:
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 256
+
+exporters:
+  otlphttp/honeycomb:
+    endpoint: https://api.honeycomb.io
+    headers:
+      x-honeycomb-team: "${HONEYCOMB_API_KEY}"
+      x-honeycomb-dataset: "${HONEYCOMB_DATASET}"
+  otlphttp/grafana:
+    endpoint: "${GRAFANA_OTLP_ENDPOINT}"
+    headers:
+      authorization: "Bearer ${GRAFANA_API_KEY}"
+  logging:
+    loglevel: info
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/honeycomb, otlphttp/grafana, logging]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/grafana, logging]

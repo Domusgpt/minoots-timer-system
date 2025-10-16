@@ -3,18 +3,31 @@ import readline from 'node:readline';
 
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
-import { connect, NatsConnection, StringCodec, Subscription } from 'nats';
+import {
+  AckPolicy,
+  DeliverPolicy,
+  JetStreamClient,
+  JetStreamSubscription,
+  RetentionPolicy,
+  StorageType,
+  Subscription,
+  connect,
+  consumerOpts,
+  NatsConnection,
+  StringCodec,
+} from 'nats';
 import { z } from 'zod';
 
 import { logger } from '../logger';
 import { TimerEvent, TimerInstance } from '../types';
+import { DeadLetterQueue } from './deadLetterQueue';
 
 const timerInstanceSchema = z.object({
   id: z.string(),
   tenantId: z.string(),
   name: z.string(),
   requestedBy: z.string(),
-  status: z.enum(['scheduled', 'armed', 'fired', 'cancelled', 'failed']),
+  status: z.enum(['scheduled', 'armed', 'fired', 'cancelled', 'failed', 'settled']),
   fireAt: z.string(),
   createdAt: z.string(),
   durationMs: z.number(),
@@ -32,12 +45,22 @@ const timerInstanceSchema = z.object({
         )
         .default([]),
       concurrency: z.number().optional(),
+      retryPolicy: z
+        .object({
+          maxAttempts: z.number().int().positive().optional(),
+          backoffInitialMs: z.number().int().nonnegative().optional(),
+          backoffMultiplier: z.number().positive().optional(),
+        })
+        .optional(),
     })
     .optional(),
   firedAt: z.string().optional(),
   cancelledAt: z.string().optional(),
   cancelReason: z.string().optional(),
   cancelledBy: z.string().optional(),
+  settledAt: z.string().optional(),
+  failureReason: z.string().optional(),
+  stateVersion: z.number().optional(),
 });
 
 const timerEventSchema: z.ZodType<TimerEvent> = z.union([
@@ -52,6 +75,10 @@ const timerEventSchema: z.ZodType<TimerEvent> = z.union([
   z.object({
     type: z.literal('cancelled'),
     data: z.object({ timer: timerInstanceSchema, reason: z.string().optional() }),
+  }) as z.ZodType<TimerEvent>,
+  z.object({
+    type: z.literal('settled'),
+    data: timerInstanceSchema,
   }) as z.ZodType<TimerEvent>,
 ]);
 
@@ -80,7 +107,7 @@ const loadKernelClientCtor = (): KernelClientConstructor => {
   if (kernelClientCtor) {
     return kernelClientCtor;
   }
-  const protoPath = path.resolve(__dirname, '../../../proto/timer.proto');
+  const protoPath = path.resolve(__dirname, '../../../../proto/timer.proto');
   const packageDefinition = protoLoader.loadSync(protoPath, loaderOptions);
   const descriptor = grpc.loadPackageDefinition(packageDefinition) as any;
   const ctor = descriptor?.minoots?.timer?.v1?.HorologyKernel;
@@ -95,6 +122,17 @@ export interface EventSource {
   start(handler: EventHandler): Promise<void>;
   stop(): Promise<void>;
 }
+
+type JetStreamConfig = {
+  servers: string;
+  stream: string;
+  subject: string;
+  durable: string;
+  queue?: string;
+  maxAckPending: number;
+  maxDeliver: number;
+  deadLetterSubject?: string;
+};
 
 export class GrpcEventSource implements EventSource {
   private client?: GrpcKernelClient;
@@ -194,7 +232,117 @@ export class StdInEventSource implements EventSource {
   }
 }
 
+export class JetStreamEventSource implements EventSource {
+  private connection?: NatsConnection;
+  private subscription?: JetStreamSubscription;
+  private jetstream?: JetStreamClient;
+  private deadLetter?: DeadLetterQueue;
+
+  constructor(private readonly config: JetStreamConfig) {}
+
+  async start(handler: EventHandler): Promise<void> {
+    this.connection = await connect({ servers: this.config.servers });
+    this.jetstream = this.connection.jetstream();
+    if (this.config.deadLetterSubject) {
+      this.deadLetter = new DeadLetterQueue(this.jetstream, this.config.deadLetterSubject);
+    }
+
+    const opts = consumerOpts();
+    opts.durable(this.config.durable);
+    opts.manualAck();
+    opts.ackExplicit();
+    opts.deliverNew();
+    opts.maxAckPending(this.config.maxAckPending);
+    opts.ackWait(30 * 1000);
+    opts.filterSubject(this.config.subject);
+    if (this.config.queue) {
+      opts.queue(this.config.queue);
+    }
+
+    // Ensure the consumer exists with the configured parameters
+    const manager = await this.connection.jetstreamManager();
+    try {
+      await manager.streams.info(this.config.stream);
+    } catch (error) {
+      await manager.streams.add({
+        name: this.config.stream,
+        subjects: [this.config.subject, this.config.deadLetterSubject ?? `${this.config.subject}.dlq`],
+        retention: RetentionPolicy.Limits,
+        storage: StorageType.File,
+      });
+    }
+
+    try {
+      await manager.consumers.add(this.config.stream, {
+        durable_name: this.config.durable,
+        ack_policy: AckPolicy.Explicit,
+        deliver_policy: DeliverPolicy.New,
+        filter_subject: this.config.subject,
+        max_deliver: this.config.maxDeliver,
+        ack_wait: 30_000_000_000,
+      });
+    } catch (error) {
+      // Consumer already exists; ignore duplicate errors
+    }
+    opts.bind(this.config.stream, this.config.durable);
+
+    this.subscription = await this.jetstream.subscribe(this.config.subject, opts);
+    const codec = StringCodec();
+
+    logger.info(
+      { subject: this.config.subject, durable: this.config.durable, queue: this.config.queue },
+      'Connected to JetStream for timer events',
+    );
+
+    (async () => {
+      for await (const message of this.subscription!) {
+        let parsed: TimerEvent | null = null;
+        try {
+          const decoded = codec.decode(message.data);
+          parsed = timerEventSchema.parse(JSON.parse(decoded));
+        } catch (error) {
+          logger.error({ error }, 'Failed to process JetStream timer event payload');
+          await this.deadLetter?.publish(null, error);
+          message.ack();
+          continue;
+        }
+
+        try {
+          await handler(parsed);
+          message.ack();
+        } catch (error) {
+          logger.error({ error }, 'Timer handler failed for JetStream event');
+          await this.deadLetter?.publish(parsed, error);
+          message.ack();
+        }
+      }
+    })();
+  }
+
+  async stop(): Promise<void> {
+    await this.subscription?.drain();
+    await this.connection?.drain();
+  }
+}
+
 export const createEventSource = async (): Promise<EventSource> => {
+  const jetStreamStream = process.env.NATS_JETSTREAM_STREAM;
+  const jetStreamDurable = process.env.NATS_JETSTREAM_CONSUMER;
+  if (jetStreamStream || jetStreamDurable) {
+    const subject = process.env.NATS_SUBJECT ?? 'minoots.timer.fired';
+    const servers = process.env.NATS_JETSTREAM_URL || process.env.NATS_URL || 'nats://localhost:4222';
+    return new JetStreamEventSource({
+      servers,
+      stream: jetStreamStream ?? 'MINOOTS_TIMER',
+      subject,
+      durable: jetStreamDurable ?? 'ACTION_ORCHESTRATOR',
+      queue: process.env.NATS_QUEUE_GROUP,
+      maxAckPending: parseInt(process.env.NATS_MAX_ACK_PENDING ?? '512', 10),
+      maxDeliver: parseInt(process.env.NATS_MAX_DELIVER ?? '10', 10),
+      deadLetterSubject: process.env.NATS_DLQ_SUBJECT,
+    });
+  }
+
   const grpcUrl = process.env.KERNEL_GRPC_URL || process.env.KERNEL_GRPC_ADDR;
   if (grpcUrl) {
     const tenantId = process.env.KERNEL_EVENT_TENANT_ID || process.env.EVENT_TENANT_ID || '__all__';
@@ -232,6 +380,10 @@ const convertGrpcEvent = (message: any): TimerEvent | null => {
       const reason = optionalString(message.cancelled?.reason);
       return { type: 'cancelled', data: { timer, reason } };
     }
+    case 'settled': {
+      const timer = convertGrpcTimer(message.settled?.timer);
+      return timer ? { type: 'settled', data: timer } : null;
+    }
     default:
       return null;
   }
@@ -258,6 +410,9 @@ const convertGrpcTimer = (payload: any): TimerInstance | null => {
     cancelledAt: optionalString(payload.cancelledAtIso),
     cancelReason: optionalString(payload.cancelReason),
     cancelledBy: optionalString(payload.cancelledBy),
+    settledAt: optionalString(payload.settledAtIso),
+    failureReason: optionalString(payload.failureReason),
+    stateVersion: payload.stateVersion ? Number(payload.stateVersion) : undefined,
   };
 
   return timer;
@@ -282,6 +437,10 @@ const mapStatus = (status: unknown): TimerInstance['status'] => {
     case 'failed':
     case '5':
       return 'failed';
+    case 'TIMER_STATUS_SETTLED':
+    case 'settled':
+    case '6':
+      return 'settled';
     case 'TIMER_STATUS_SCHEDULED':
     case 'scheduled':
     case '1':
