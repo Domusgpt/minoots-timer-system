@@ -128,3 +128,18 @@ docker compose -f docker-compose.dev.yml down
 ```
 
 This environment baseline satisfies the Wave 0 exit criteria: durable timers in Postgres, JetStream fan-out, and OTEL traces collected locally.
+
+## 8. Postgres-backed test harness
+
+Kernel tests that exercise Postgres persistence (command log + restore flows) expect a `TEST_DATABASE_URL`
+to be present. Copy the connection string from `.env` or `.env.example` and export it before running
+`cargo test` so SQLx can migrate and reuse the same containerized database:
+
+```bash
+export TEST_DATABASE_URL=postgres://minoots:development@localhost:5432/minoots
+cargo test --manifest-path services/horology-kernel/Cargo.toml
+```
+
+The helper in `services/horology-kernel/src/test_support.rs` falls back to `DATABASE_URL` if the test-specific
+variable is not set, but defining `TEST_DATABASE_URL` keeps local development isolated from any other Postgres
+instances you may have running.
