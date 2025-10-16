@@ -1,0 +1,41 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: minoots-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: minoots
+      POSTGRES_PASSWORD: development
+      POSTGRES_DB: minoots
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  nats:
+    image: nats:2.10
+    container_name: minoots-nats
+    command: ["-js", "--server_name=agentic-timer"]
+    restart: unless-stopped
+    ports:
+      - "4222:4222"
+      - "6222:6222"
+      - "8222:8222"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.99.0
+    container_name: minoots-otel-collector
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    volumes:
+      - ./infrastructure/otel/collector-config.yaml:/etc/otelcol/collector.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - nats
+      - postgres
+
+volumes:
+  postgres-data:
