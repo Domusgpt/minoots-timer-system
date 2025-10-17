@@ -46,6 +46,8 @@ async fn grpc_schedule_and_cancel_roundtrip() {
             labels: HashMap::new(),
             action_bundle_json: String::new(),
             agent_binding_json: String::new(),
+            temporal_graph_json: String::new(),
+            jitter_policy_json: String::new(),
         }))
         .await
         .expect("schedule response")

@@ -33,6 +33,10 @@ export interface TimerInstance {
   settledAt?: string;
   failureReason?: string;
   stateVersion?: number;
+  graphRootId?: string;
+  graphNodeId?: string;
+  temporalGraph?: Record<string, unknown>;
+  jitterPolicy?: Record<string, unknown>;
 }
 
 export type TimerEvent =
@@ -40,6 +44,27 @@ export type TimerEvent =
   | { type: 'fired'; data: TimerInstance }
   | { type: 'cancelled'; data: { timer: TimerInstance; reason?: string } }
   | { type: 'settled'; data: TimerInstance };
+
+export type TimerEventType = TimerEvent['type'];
+
+export interface TimerEventEnvelope {
+  envelopeId: string;
+  tenantId: string;
+  occurredAtIso: string;
+  dedupeKey: string;
+  traceId?: string;
+  signature: string;
+  signatureVersion: string;
+  eventType: TimerEventType;
+  event: TimerEvent;
+}
+
+export interface AgentCommandProgress {
+  stage: string;
+  message: string;
+  timestamp: string;
+  metadata?: Record<string, unknown>;
+}
 
 export interface ExecutionResult {
   actionId: string;

@@ -1,6 +1,7 @@
 use std::pin::Pin;
 
 use futures_core::Stream;
+use serde::Serialize;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tonic::{Request, Response, Status};
 
@@ -11,10 +12,13 @@ use crate::pb::{
     self, TimerCancelRequest, TimerEventStreamRequest, TimerGetRequest, TimerListRequest,
     TimerScheduleRequest,
 };
-use crate::{HorologyKernel, KernelError, TimerEvent, TimerInstance, TimerSpec, TimerStatus};
+use crate::{
+    EventEnvelope, HorologyKernel, JitterPolicy, KernelError, TemporalGraphSpec, TimerEvent,
+    TimerInstance, TimerSpec, TimerStatus,
+};
 
 pub type TimerEventStream =
-    Pin<Box<dyn Stream<Item = Result<pb::TimerEvent, Status>> + Send + 'static>>;
+    Pin<Box<dyn Stream<Item = Result<pb::TimerEventEnvelope, Status>> + Send + 'static>>;
 
 #[derive(Clone)]
 pub struct HorologyKernelService {
@@ -124,13 +128,13 @@ impl HorologyKernelApi for HorologyKernelService {
 
         let receiver = self.kernel.subscribe();
         let stream = BroadcastStream::new(receiver).filter_map(move |event| match event {
-            Ok(event)
+            Ok(envelope)
                 if tenant_filter
                     .as_ref()
-                    .map(|tenant| event_belongs_to_tenant(&event, tenant))
+                    .map(|tenant| envelope_belongs_to_tenant(&envelope, tenant))
                     .unwrap_or(true) =>
             {
-                Some(event_to_proto(event))
+                Some(envelope_to_proto(envelope))
             }
             Ok(_) => None,
             Err(_) => Some(Err(Status::aborted("event channel closed"))),
@@ -185,6 +189,9 @@ fn convert_schedule_request(request: TimerScheduleRequest) -> Result<TimerSpec, 
         labels: request.labels,
         action_bundle: parse_optional_json_string(request.action_bundle_json)?,
         agent_binding: parse_optional_json_string(request.agent_binding_json)?,
+        temporal_graph: parse_optional_graph_json(request.temporal_graph_json)?,
+        graph_context: None,
+        jitter_policy: parse_optional_jitter_policy(request.jitter_policy_json)?,
     };
 
     Ok(spec)
@@ -223,6 +230,13 @@ fn to_proto_timer(timer: TimerInstance) -> Result<pb::Timer, Status> {
             .max(0)
             .try_into()
             .map_err(|_| Status::internal("timer state version overflow"))?,
+        graph_root_id: timer
+            .graph_root_id
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+        graph_node_id: timer.graph_node_id.unwrap_or_default(),
+        temporal_graph_json: serialize_struct(timer.temporal_graph)?,
+        jitter_policy_json: serialize_struct(timer.jitter_policy)?,
     })
 }
 
@@ -264,13 +278,24 @@ fn event_to_proto(event: TimerEvent) -> Result<pb::TimerEvent, Status> {
     }
 }
 
-fn event_belongs_to_tenant(event: &TimerEvent, tenant_id: &str) -> bool {
-    match event {
-        TimerEvent::Scheduled(timer) => timer.tenant_id == tenant_id,
-        TimerEvent::Fired(timer) => timer.tenant_id == tenant_id,
-        TimerEvent::Cancelled { timer, .. } => timer.tenant_id == tenant_id,
-        TimerEvent::Settled(timer) => timer.tenant_id == tenant_id,
-    }
+fn envelope_to_proto(envelope: EventEnvelope) -> Result<pb::TimerEventEnvelope, Status> {
+    let event_type = envelope.event_type().as_str().to_string();
+    let event = event_to_proto(envelope.event)?;
+    Ok(pb::TimerEventEnvelope {
+        envelope_id: envelope.envelope_id.to_string(),
+        tenant_id: envelope.tenant_id,
+        occurred_at_iso: envelope.occurred_at_iso,
+        dedupe_key: envelope.dedupe_key,
+        trace_id: envelope.trace_id.unwrap_or_default(),
+        signature: envelope.signature,
+        signature_version: envelope.signature_version,
+        event_type,
+        event: Some(event),
+    })
+}
+
+fn envelope_belongs_to_tenant(envelope: &EventEnvelope, tenant_id: &str) -> bool {
+    envelope.tenant_id == tenant_id
 }
 
 fn map_kernel_error(error: KernelError) -> Status {
@@ -308,6 +333,34 @@ fn serialize_json(value: Option<serde_json::Value>) -> Result<String, Status> {
     match value {
         Some(inner) => serde_json::to_string(&inner)
             .map_err(|error| Status::internal(format!("failed to serialize json: {error}"))),
+        None => Ok(String::new()),
+    }
+}
+
+fn parse_optional_graph_json(value: String) -> Result<Option<TemporalGraphSpec>, Status> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(trimmed).map(Some).map_err(|error| {
+        Status::invalid_argument(format!("invalid temporal graph payload: {error}"))
+    })
+}
+
+fn parse_optional_jitter_policy(value: String) -> Result<Option<JitterPolicy>, Status> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(trimmed).map(Some).map_err(|error| {
+        Status::invalid_argument(format!("invalid jitter policy payload: {error}"))
+    })
+}
+
+fn serialize_struct<T: Serialize>(value: Option<T>) -> Result<String, Status> {
+    match value {
+        Some(inner) => serde_json::to_string(&inner)
+            .map_err(|error| Status::internal(format!("failed to serialize payload: {error}"))),
         None => Ok(String::new()),
     }
 }

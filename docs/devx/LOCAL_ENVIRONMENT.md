@@ -23,7 +23,7 @@ Use the shared bootstrap script to start Postgres, NATS JetStream, and the OpenT
 
 The script performs the following steps:
 1. `docker compose -f docker-compose.dev.yml up -d`
-2. `npm run db:migrate` within `apps/control-plane`
+2. `npm run db:migrate` within `apps/control-plane` (creates timer + raft persistence tables including `kernel_raft_log` and `kernel_raft_metadata`)
 3. `npm run policy:seed` within `apps/control-plane` (ensures tenants, API keys, and quotas)
 4. `node services/action-orchestrator/scripts/ensure-jetstream.js`
 
@@ -50,6 +50,20 @@ KERNEL_DATABASE_URL=postgres://minoots:development@localhost:5432/minoots \
 ```
 
 If `KERNEL_STORE` is omitted or set to an unknown value the kernel falls back to the in-memory store.
+
+### 4.2 Event envelope signing
+
+Wave 1 adds signed event envelopes so downstream consumers can discard spoofed timer events. The kernel and action orchestrator
+derive their HMAC signatures from a shared secret. Set `EVENT_ENVELOPE_SECRET` (or `KERNEL_ENVELOPE_SECRET`) in your `.env`
+before launching either service:
+
+```bash
+export EVENT_ENVELOPE_SECRET=$(openssl rand -hex 32)
+```
+
+The orchestrator reads the same variable and verifies every JetStream/gRPC event before executing actions. When the secret is
+missing both services fall back to a well-known development default, which is convenient for quick smoke tests but should not
+be used outside of local workspaces.
 
 ### 4.1 Leadership coordination options
 
@@ -104,7 +118,8 @@ cd services/action-orchestrator
 npm run dev
 ```
 
-Set `NATS_JETSTREAM_STREAM`, `NATS_JETSTREAM_CONSUMER`, and `NATS_DLQ_SUBJECT` in `.env` to match the bootstrap defaults.
+Set `NATS_JETSTREAM_URL` (or `NATS_URL`), `NATS_JETSTREAM_STREAM`, `NATS_JETSTREAM_CONSUMER`, and `NATS_DLQ_SUBJECT` in `.env` to match the bootstrap defaults.
+When these variables are present, the horology kernel publishes signed `TimerEventEnvelope` JSON directly to `NATS_SUBJECT`, letting any JetStream consumer verify HMAC signatures before executing actions.
 Use the DLQ utility to inspect or replay failed events:
 
 ```bash
@@ -118,7 +133,22 @@ npm run dlq:inspect # or dlq:replay
   ```bash
   docker exec -it minoots-postgres psql -U minoots -d minoots -c "SELECT id, tenant_id, status FROM timer_records;"
   ```
+- Verify Raft durability by inspecting `kernel_raft_log` and the metadata snapshot:
+
+  ```bash
+  docker exec -it minoots-postgres psql -U minoots -d minoots \
+    -c "SELECT log_index, entry FROM kernel_raft_log ORDER BY log_index;"
+  docker exec -it minoots-postgres psql -U minoots -d minoots \
+    -c "SELECT vote, committed, snapshot_meta FROM kernel_raft_metadata;"
+  ```
+- Confirm OTEL spans are flowing for raft persistence by tailing the collector logs and
+  filtering for the `horology.kernel.raft.*` span names:
+
+  ```bash
+  docker logs minoots-otel-collector | grep "horology.kernel.raft"
+  ```
 - Use `nats stream view MINOOTS_TIMER` to verify JetStream subjects and DLQ messages.
+- Inspect live payloads with `nats subscribe minoots.timer.fired` and confirm the envelopes include `signature_version` and match the configured `EVENT_ENVELOPE_SECRET`.
 
 ## 7. Cleanup
 Tear down the infrastructure when finished:
@@ -128,3 +158,104 @@ docker compose -f docker-compose.dev.yml down
 ```
 
 This environment baseline satisfies the Wave 0 exit criteria: durable timers in Postgres, JetStream fan-out, and OTEL traces collected locally.
+
+## 8. Postgres-backed test harness
+
+Kernel tests that exercise Postgres persistence (command log + restore flows) expect a `TEST_DATABASE_URL`
+to be present. Copy the connection string from `.env` or `.env.example` and export it before running
+`cargo test` so SQLx can migrate and reuse the same containerized database:
+
+```bash
+export TEST_DATABASE_URL=postgres://minoots:development@localhost:5432/minoots
+cargo test --manifest-path services/horology-kernel/Cargo.toml
+```
+
+The helper in `services/horology-kernel/src/test_support.rs` falls back to `DATABASE_URL` if the test-specific
+variable is not set, but defining `TEST_DATABASE_URL` keeps local development isolated from any other Postgres
+instances you may have running.
+
+The restart harness also verifies that the Postgres command log captures lifecycle events after a kernel reboot.
+Inspect the entries with psql to confirm both the `fire` and `settle` commands were recorded for the restored timer:
+
+```bash
+docker exec -it minoots-postgres psql -U minoots -d minoots \
+  -c "SELECT command, timer_id, tenant_id FROM timer_command_log ORDER BY id;"
+```
+
+## 9. JetStream integration harness
+
+Wave 1 completes with an end-to-end JetStream test that spawns a local `nats-server`, publishes a signed
+`TimerEventEnvelope` through the kernel forwarder, and consumes it via a durable JetStream consumer to verify
+the signature and persistence contract. Install a JetStream-capable `nats-server` binary and point the test harness
+at it with `NATS_SERVER_BIN` before running the suite:
+
+```bash
+curl -L -o /tmp/nats-server.tar.gz \
+  https://github.com/nats-io/nats-server/releases/download/v2.10.16/nats-server-v2.10.16-linux-amd64.tar.gz
+tar -xzf /tmp/nats-server.tar.gz -C /tmp
+export NATS_SERVER_BIN=/tmp/nats-server-v2.10.16-linux-amd64/nats-server
+cargo test --manifest-path services/horology-kernel/Cargo.toml --tests
+```
+
+The harness automatically provisions a temporary JetStream store and consumer, so the only prerequisite is ensuring
+the `nats-server` binary is available. The test will be skipped if the binary cannot be found, but Wave 1 exit criteria
+require the harness to run and pass before shipping changes that touch the event pipeline.
+
+## 10. Wave 2 temporal graphs, jitter compensation, and streaming
+
+Wave 2 introduces temporal graphs, jitter tracking, and long-lived event streams across the stack. After pulling the latest
+changes, re-run the control-plane migrations so the new timer columns are present:
+
+```bash
+cd apps/control-plane
+npm install
+npm run db:migrate
+```
+
+### Temporal graph + jitter metadata
+
+- The control plane now accepts `temporalGraph` definitions on `POST /timers`. Each node can specify `after`, `offset`,
+  `duration`, metadata, labels, and per-node action bundles/agent bindings.
+- Optional jitter policies (`jitterPolicy`) smooth firing drift; the kernel records observed jitter and compensates
+  follow-up offsets up to the configured cap.
+- Persisted timers include `graphRootId`, `graphNodeId`, `temporalGraph`, and `jitterPolicy` columns. Inspect them via:
+
+  ```bash
+  docker exec -it minoots-postgres psql -U minoots -d minoots \
+    -c "SELECT id, graph_root_id, graph_node_id, temporal_graph, jitter_policy FROM timer_records ORDER BY created_at DESC LIMIT 5;"
+  ```
+
+### Streaming APIs
+
+- **Server-Sent Events**: `GET /timers/stream?tenantId=...&topic=timer.fired` keeps an SSE connection open. Provide the
+  usual `x-api-key` header; the route enforces tenant isolation and emits keep-alive comments every 15 s.
+  Example curl session:
+
+  ```bash
+  curl -N -H 'x-api-key: local-dev-key' 'http://localhost:4000/timers/stream?tenantId=tenant-local'
+  ```
+
+- **WebSocket bridge**: Connect to `ws://localhost:4000/timers/ws?tenantId=tenant-local&topic=timer.fired` and include the
+  same API key + tenant headers during the upgrade. The server authenticates the handshake, subscribes to the kernel
+  stream, and forwards JSON messages of the shape `{ type: 'event', payload: <TimerEventEnvelope> }`.
+- **SDK helper**: `sdk/minoots-sdk.js` now exports `streamTimerEvents(tenantId, { topics, onEvent })`, wrapping the SSE
+  endpoint for Node.js consumers. Pass an `AbortController` signal to cancel the stream.
+
+### Agent command bus
+
+The action orchestrator gained an internal agent command bus that routes `agent_prompt` actions to the configured adapter
+(`mcp`, `langchain`, `autogen`, or `custom`/webhook). Progress callbacks surface connector milestones in the action execution
+result. Run the new unit tests with:
+
+```bash
+cd services/action-orchestrator
+npm install
+npm test
+```
+
+Finally, keep the TypeScript builds healthy after the interface changes:
+
+```bash
+cd apps/control-plane
+npm test
+```

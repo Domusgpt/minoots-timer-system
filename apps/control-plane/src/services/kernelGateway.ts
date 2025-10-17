@@ -6,7 +6,16 @@ import { v4 as uuid } from 'uuid';
 
 import { TimerRepository } from '../store/timerRepository';
 import { createTimerRepository } from '../store/createTimerRepository';
-import { TimerRecord, TimerActionBundle, AgentBinding, TimerStatus } from '../types/timer';
+import {
+  TimerRecord,
+  TimerActionBundle,
+  AgentBinding,
+  TimerStatus,
+  TimerGraphDefinition,
+  JitterPolicy,
+  TimerEventEnvelope,
+  TimerEvent,
+} from '../types/timer';
 import { logger } from '../telemetry/logger';
 
 const DEFAULT_GRPC_URL = 'localhost:50051';
@@ -56,6 +65,8 @@ export interface TimerScheduleCommand {
   labels?: Record<string, string>;
   actionBundle?: TimerActionBundle;
   agentBinding?: AgentBinding;
+  temporalGraph?: TimerGraphDefinition;
+  jitterPolicy?: JitterPolicy;
 }
 
 export interface TimerCancelCommand {
@@ -72,11 +83,31 @@ export interface KernelGatewayContext {
   headers: Record<string, string>;
 }
 
+export interface TimerEventStreamOptions {
+  tenantId: string;
+  topics?: string[];
+}
+
+export interface TimerEventHandlers {
+  onEvent: (envelope: TimerEventEnvelope) => void;
+  onError?: (error: Error) => void;
+  onClose?: () => void;
+}
+
+export interface TimerEventSubscription {
+  close(): void;
+}
+
 export interface KernelGateway {
   schedule(command: TimerScheduleCommand, context: KernelGatewayContext): Promise<TimerRecord>;
   cancel(command: TimerCancelCommand, context: KernelGatewayContext): Promise<TimerRecord | null>;
   list(tenantId: string, context: KernelGatewayContext): Promise<TimerRecord[]>;
   get(tenantId: string, timerId: string, context: KernelGatewayContext): Promise<TimerRecord | null>;
+  streamEvents(
+    options: TimerEventStreamOptions,
+    context: KernelGatewayContext,
+    handlers: TimerEventHandlers,
+  ): TimerEventSubscription;
 }
 
 export class KernelNotLeaderError extends Error {
@@ -106,6 +137,10 @@ export class InMemoryKernelGateway implements KernelGateway {
       labels: command.labels ?? {},
       actionBundle: cloneNullable(command.actionBundle),
       agentBinding: cloneNullable(command.agentBinding),
+      temporalGraph: cloneNullable(command.temporalGraph),
+      graphRootId: undefined,
+      graphNodeId: undefined,
+      jitterPolicy: cloneNullable(command.jitterPolicy),
     };
     return this.repository.save(timer);
   }
@@ -143,6 +178,18 @@ export class InMemoryKernelGateway implements KernelGateway {
     _context: KernelGatewayContext,
   ): Promise<TimerRecord | null> {
     return this.repository.findById(tenantId, timerId);
+  }
+
+  streamEvents(
+    _options: TimerEventStreamOptions,
+    _context: KernelGatewayContext,
+    handlers: TimerEventHandlers,
+  ): TimerEventSubscription {
+    const error = new Error('Timer event streaming is not supported by the in-memory gateway');
+    setImmediate(() => handlers.onError?.(error));
+    return {
+      close: () => undefined,
+    };
   }
 }
 
@@ -237,6 +284,37 @@ export class GrpcKernelGateway implements KernelGateway {
     });
   }
 
+  streamEvents(
+    options: TimerEventStreamOptions,
+    context: KernelGatewayContext,
+    handlers: TimerEventHandlers,
+  ): TimerEventSubscription {
+    const metadata = this.buildMetadata(context);
+    const request = {
+      tenantId: options.tenantId,
+      topics: options.topics ?? [],
+    };
+    const call = (this.client as any).streamTimerEvents(request, metadata);
+    call.on('data', (payload: any) => {
+      try {
+        handlers.onEvent(mapTimerEventEnvelope(payload));
+      } catch (error) {
+        handlers.onError?.(error as Error);
+      }
+    });
+    call.on('error', (error: grpc.ServiceError) => {
+      handlers.onError?.(normalizeGrpcError('streamTimerEvents', error));
+    });
+    call.on('end', () => {
+      handlers.onClose?.();
+    });
+    return {
+      close: () => {
+        call.cancel();
+      },
+    };
+  }
+
   private buildMetadata(context: KernelGatewayContext): grpc.Metadata {
     const metadata = new grpc.Metadata();
     Object.entries(context.headers).forEach(([key, value]) => {
@@ -273,6 +351,8 @@ const buildScheduleRequest = (command: TimerScheduleCommand) => ({
   labels: command.labels ?? {},
   actionBundleJson: command.actionBundle ? JSON.stringify(command.actionBundle) : '',
   agentBindingJson: command.agentBinding ? JSON.stringify(command.agentBinding) : '',
+  temporalGraphJson: command.temporalGraph ? JSON.stringify(command.temporalGraph) : '',
+  jitterPolicyJson: command.jitterPolicy ? JSON.stringify(command.jitterPolicy) : '',
 });
 
 const mapTimer = (payload: any): TimerRecord => {
@@ -303,6 +383,10 @@ const mapTimer = (payload: any): TimerRecord => {
       : payload.state_version !== undefined
         ? Number(payload.state_version)
         : undefined,
+    temporalGraph: parseGraphDefinition(payload.temporalGraphJson ?? payload.temporal_graph_json),
+    graphRootId: optionalString(payload.graphRootId ?? payload.graph_root_id),
+    graphNodeId: optionalString(payload.graphNodeId ?? payload.graph_node_id),
+    jitterPolicy: parseJitterPolicy(payload.jitterPolicyJson ?? payload.jitter_policy_json),
   };
 };
 
@@ -362,6 +446,73 @@ const cloneNullable = <T>(value: T | undefined): T | undefined => {
     return undefined;
   }
   return JSON.parse(JSON.stringify(value));
+};
+
+const parseJsonValue = <T>(value: unknown): T | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  if (typeof value === 'object') {
+    return value as T;
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    try {
+      return JSON.parse(value) as T;
+    } catch (error) {
+      logger.warn({ error }, 'Failed to parse JSON payload from kernel');
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
+const parseGraphDefinition = (value: unknown): TimerGraphDefinition | undefined => {
+  return parseJsonValue<TimerGraphDefinition>(value);
+};
+
+const parseJitterPolicy = (value: unknown): JitterPolicy | undefined => {
+  return parseJsonValue<JitterPolicy>(value);
+};
+
+const mapTimerEventEnvelope = (payload: any): TimerEventEnvelope => {
+  if (!payload) {
+    throw new Error('Kernel returned empty timer event envelope');
+  }
+  const event = mapTimerEvent(payload.event ?? payload);
+  return {
+    envelopeId: payload.envelopeId ?? payload.envelope_id,
+    tenantId: payload.tenantId ?? payload.tenant_id,
+    occurredAtIso: payload.occurredAtIso ?? payload.occurred_at_iso,
+    dedupeKey: payload.dedupeKey ?? payload.dedupe_key,
+    traceId: optionalString(payload.traceId ?? payload.trace_id),
+    signature: payload.signature,
+    signatureVersion: payload.signatureVersion ?? payload.signature_version,
+    eventType: event.type,
+    event,
+  };
+};
+
+const mapTimerEvent = (payload: any): TimerEvent => {
+  const event = payload?.event ?? payload;
+  if (!event) {
+    throw new Error('Timer event is missing payload');
+  }
+  if (event.scheduled?.timer) {
+    return { type: 'scheduled', data: mapTimer(event.scheduled.timer) };
+  }
+  if (event.fired?.timer) {
+    return { type: 'fired', data: mapTimer(event.fired.timer) };
+  }
+  if (event.cancelled?.timer) {
+    return {
+      type: 'cancelled',
+      data: { timer: mapTimer(event.cancelled.timer), reason: optionalString(event.cancelled.reason) },
+    };
+  }
+  if (event.settled?.timer) {
+    return { type: 'settled', data: mapTimer(event.settled.timer) };
+  }
+  throw new Error('Unsupported timer event payload');
 };
 
 const normalizeGrpcError = (method: string, error: unknown): Error => {

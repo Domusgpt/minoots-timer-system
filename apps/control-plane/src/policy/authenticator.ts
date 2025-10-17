@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 
+import type { IncomingHttpHeaders } from 'http';
+
 import type { Metadata } from '@grpc/grpc-js';
 import type { Request, Response, NextFunction } from 'express';
 
@@ -20,7 +22,7 @@ export class Authenticator {
     if (!apiKey) {
       return null;
     }
-    return this.authenticate(apiKey, req.header('x-trace-id') ?? undefined);
+    return this.authenticateInternal(apiKey, req.header('x-trace-id') ?? undefined);
   }
 
   async authenticateMetadata(metadata: Metadata): Promise<AuthContext | null> {
@@ -29,7 +31,19 @@ export class Authenticator {
       return null;
     }
     const traceId = metadata.get('x-trace-id').find((value) => typeof value === 'string');
-    return this.authenticate(apiKey, traceId as string | undefined);
+    return this.authenticateInternal(apiKey, traceId as string | undefined);
+  }
+
+  async authenticateHeaders(headers: IncomingHttpHeaders): Promise<AuthContext | null> {
+    const headerKey = this.headerName.toLowerCase();
+    const headerValue = headers[headerKey] ?? headers[this.headerName];
+    const apiKey = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+    if (!apiKey || typeof apiKey !== 'string') {
+      return null;
+    }
+    const traceHeader = headers['x-trace-id'];
+    const traceId = Array.isArray(traceHeader) ? traceHeader[0] : traceHeader;
+    return this.authenticateInternal(apiKey, typeof traceId === 'string' ? traceId : undefined);
   }
 
   async middleware(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -47,7 +61,7 @@ export class Authenticator {
     }
   }
 
-  private async authenticate(apiKey: string, traceId?: string): Promise<AuthContext | null> {
+  private async authenticateInternal(apiKey: string, traceId?: string): Promise<AuthContext | null> {
     const hash = hashApiKey(apiKey);
     const pool = getPostgresPool();
     const record = await findApiKeyByHash(pool, hash);
