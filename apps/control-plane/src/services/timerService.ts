@@ -4,6 +4,7 @@ import { AuthContext } from '../policy/types';
 import { TimerCancelInput, TimerCreateInput, TimerRecord } from '../types/timer';
 import { computeFireTimestamp, parseDurationMs } from '../utils/duration';
 import {
+  KernelEventStream,
   KernelGateway,
   KernelGatewayContext,
   TimerCancelCommand,
@@ -68,6 +69,13 @@ export class TimerService {
       return error;
     }
     return error instanceof Error ? error : new Error('Unknown timer service error');
+  }
+
+  streamEvents(context: AuthContext, tenantId: string): KernelEventStream {
+    if (tenantId !== context.tenantId) {
+      throw new Error('Authenticated principal cannot subscribe to another tenant');
+    }
+    return this.kernelGateway.streamEvents(tenantId, this.toGatewayContext(context));
   }
 
   private durationFromFireAt(fireAt: string, now = new Date()): number {

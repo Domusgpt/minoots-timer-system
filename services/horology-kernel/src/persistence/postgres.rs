@@ -28,11 +28,15 @@ impl PostgresTimerStore {
             .await
             .with_context(|| "failed to connect to postgres for timer store")?;
         info!("connected to postgres for timer store");
-        Ok(Self { pool })
+        Ok(Self::from_pool(pool))
     }
 
     pub fn pool(&self) -> Pool<Postgres> {
         self.pool.clone()
+    }
+
+    pub fn from_pool(pool: Pool<Postgres>) -> Self {
+        Self { pool }
     }
 }
 
@@ -74,6 +78,7 @@ impl TimerStore for PostgresTimerStore {
                 settled_at: row.try_get("settled_at")?,
                 failure_reason: row.try_get("failure_reason")?,
                 state_version: row.try_get::<i64, _>("state_version")?,
+                jitter_ms: row.try_get("jitter_ms")?,
             };
             timers.push(timer);
         }
@@ -86,11 +91,11 @@ impl TimerStore for PostgresTimerStore {
             INSERT INTO timer_records (
                 tenant_id, id, requested_by, name, duration_ms, created_at, fire_at, status,
                 metadata, labels, action_bundle, agent_binding, fired_at, cancelled_at, cancel_reason, cancelled_by,
-                settled_at, failure_reason, state_version
+                settled_at, failure_reason, state_version, jitter_ms
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
                 $9, $10, $11, $12, $13, $14, $15, $16,
-                $17, $18, $19
+                $17, $18, $19, $20
             )
             ON CONFLICT (tenant_id, id) DO UPDATE SET
                 requested_by = EXCLUDED.requested_by,
@@ -109,7 +114,8 @@ impl TimerStore for PostgresTimerStore {
                 cancelled_by = EXCLUDED.cancelled_by,
                 settled_at = EXCLUDED.settled_at,
                 failure_reason = EXCLUDED.failure_reason,
-                state_version = EXCLUDED.state_version
+                state_version = EXCLUDED.state_version,
+                jitter_ms = EXCLUDED.jitter_ms
             "#,
         )
         .bind(&timer.tenant_id)
@@ -131,6 +137,7 @@ impl TimerStore for PostgresTimerStore {
         .bind(timer.settled_at)
         .bind(timer.failure_reason.clone())
         .bind(timer.state_version)
+        .bind(timer.jitter_ms)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -230,6 +237,7 @@ mod tests {
             settled_at: None,
             failure_reason: None,
             state_version: 0,
+            jitter_ms: None,
         };
 
         command_log

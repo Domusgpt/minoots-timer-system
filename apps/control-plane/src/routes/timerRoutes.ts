@@ -29,6 +29,7 @@ const toResponse = (timer: TimerRecord) => ({
   cancelledBy: timer.cancelledBy,
   settledAt: timer.settledAt,
   failureReason: timer.failureReason,
+  jitterMs: timer.jitterMs,
 });
 
 const tenantFromQuery = (req: AuthenticatedRequest): string => {
@@ -74,6 +75,16 @@ const handleError = (err: unknown, res: Response) => {
       .json({ message: err.message, retryAfterMs: err.retryAfterMs });
     return;
   }
+  if (err instanceof Error) {
+    if (err.message === 'Tenant mismatch with authenticated principal') {
+      res.status(403).json({ message: err.message });
+      return;
+    }
+    if (err.message === 'x-tenant-id header is required') {
+      res.status(400).json({ message: err.message });
+      return;
+    }
+  }
 
   logger.error({ err }, 'Timer route error');
   res.status(500).json({ message: 'Unexpected error' });
@@ -115,6 +126,69 @@ export const registerTimerRoutes = (
       res.json(timers.map(toResponse));
     } catch (err) {
       handleError(err, res);
+    }
+  });
+
+  router.get('/stream', requireRole('timer.read'), async (req: AuthenticatedRequest, res) => {
+    const context = req.authContext!;
+    let tenantId: string;
+    try {
+      tenantId = tenantFromQuery(req);
+    } catch (err) {
+      handleError(err, res);
+      return;
+    }
+    if (tenantId !== context.tenantId) {
+      res
+        .status(403)
+        .json({ message: 'Authenticated principal cannot access requested tenant' });
+      return;
+    }
+
+    let stream: ReturnType<TimerService['streamEvents']>;
+    try {
+      stream = timerService.streamEvents(context, tenantId);
+    } catch (err) {
+      handleError(err, res);
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.flushHeaders?.();
+    res.write(': stream-start\n\n');
+
+    let closed = false;
+    const shutdown = () => {
+      if (!closed) {
+        closed = true;
+        try {
+          stream.close();
+        } catch (err) {
+          logger.warn({ err }, 'Failed to close timer event stream');
+        }
+        res.end();
+      }
+    };
+
+    req.on('close', shutdown);
+    req.on('error', shutdown);
+
+    try {
+      for await (const event of stream) {
+        const payload = JSON.stringify(event);
+        res.write(`event: ${event.eventType}\n`);
+        res.write(`data: ${payload}\n\n`);
+      }
+    } catch (err) {
+      if (!closed) {
+        logger.error({ err }, 'Timer SSE stream encountered an error');
+      }
+    } finally {
+      shutdown();
     }
   });
 
