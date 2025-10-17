@@ -435,3 +435,23 @@ Next update due: After auth implementation complete
 
 **Tests Performed:**
 - ✅ `npm test` *(services/action-orchestrator)*
+
+### Entry #17: Phase 3 Kickoff – SDK Modernization - COMPLETED
+**Time:** 2025-10-26 16:10-18:40 UTC
+**Task:** Launch Phase 3 developer tooling by upgrading the JavaScript SDK and scaffolding the Python client surface.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. ✅ Refactored the Node.js SDK with injectable fetch support, structured error classes, timeout handling, and SSE parsing resiliance.
+2. ✅ Authored `minoots-sdk.d.ts`, refreshed package metadata, and expanded README guidance for both JavaScript and TypeScript consumers.
+3. ✅ Replaced the live-API tests with a deterministic fetch stub harness so `npm test` runs offline while asserting payload correctness.
+4. ✅ Bootstrapped the async Python SDK (`sdk/python/`) using httpx, including timer helpers, SSE streaming, and shared duration utilities.
+5. ✅ Documented the updated developer workflow in the SDK README and noted follow-up tasks in the roadmap.
+
+**Tests Performed:**
+- ✅ `npm test` *(sdk/)*
+
+**Next Steps:**
+- Publish the Node.js package and align the MCP toolchain on the typed surface.
+- Add pytest + respx coverage for the Python client and ship a synchronous convenience facade.
+- Begin CLI v2 design leveraging the shared SDK abstractions.

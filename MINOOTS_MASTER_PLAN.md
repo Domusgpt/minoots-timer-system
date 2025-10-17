@@ -80,15 +80,15 @@
 
 #### 3.1 JavaScript/Node.js SDK
 - [ ] Create npm package `@minoots/timer-sdk`
-- [ ] Implement promise-based API
-- [ ] Add TypeScript support with full type definitions
+- [x] Implement promise-based API
+- [x] Add TypeScript support with full type definitions
 - [ ] Create React hooks for timer management
 - [ ] Add Vue.js composables
 - [ ] Implement retry logic and error handling
 - [ ] Create comprehensive SDK documentation
 
 #### 3.2 Multi-Language SDKs
-- [ ] Python SDK with async/await support
+- [x] Python SDK with async/await support *(preview; tests + packaging pending)*
 - [ ] Go SDK for high-performance applications
 - [ ] Rust SDK for systems programming
 - [ ] PHP SDK for web applications
