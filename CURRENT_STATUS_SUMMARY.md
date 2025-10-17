@@ -28,6 +28,27 @@
 - **Node.js SDK** - Complete SDK with examples and tests
 - **API Documentation** - Comprehensive docs and Postman collection
 
+### 🧰 Phase 3 Tooling Boost (2025-11-03)
+- Node SDK now ships resilient retry/backoff helpers with lifecycle hooks for instrumentation.
+- React (`sdk/react/useMinootsTimer.ts`) and Vue (`sdk/vue/useMinootsTimer.ts`) bindings unblock dashboard workstreams.
+- Python SDK adds LangChain `AtoTimerTool` and LlamaIndex helpers with optional dependencies for agent stacks.
+- Respx-backed pytest harness validates the async Python client offline, covering happy paths, API errors, and timeout handling.
+- GitHub Action (`.github/actions/minoots-timer`) and Slack `/ato` command reference integration accelerate ops automation.
+
+### 🛡️ Phase 4 Foundations Ignited
+- Firestore rules, Express middleware, and new `/teams` endpoints deliver working organization + RBAC scaffolding.
+- Timer APIs enforce team membership—anonymous access now restricted to personal timers only.
+- Team management utilities (`functions/utils/teamService.js`) centralize invites, role changes, and membership lists.
+- Invitation lifecycle endpoints + Stripe team billing linkage let owners issue tokens, accept invites, and attach subscription metadata to teams.
+
+### 🧱 Phase 4 Enterprise Feature Suite (2025-11-04)
+- Collaboration mode ships with `/teams/:teamId/shared-timers` APIs, collaborator role controls, and Firestore guardrails so editors can co-manage timers safely.
+- `/teams/:teamId/analytics/*` endpoints surface usage summaries, timer history, and active snapshots for the upcoming admin dashboard.
+- Full billing console: owners can record metered usage, list invoices, rotate payment methods, trigger trials, and apply promotions directly via the API.
+- SSO providers (OIDC + SAML) can be configured per team with public assertion endpoint issuing Firebase custom tokens and auto-provisioning memberships.
+- Timer templates, cron schedules, dependency unlocking, conditional execution, retry backoff, and worker assignments unlock the entire Phase 4 advanced timer backlog.
+- `runScheduledTimers` Cloud Function materializes cron definitions, while metrics logging tracks drift/webhook latency for performance reviews.
+
 ## 🎯 BUSINESS MODEL LOCKED IN
 
 ### Pricing Strategy:
@@ -76,25 +97,17 @@ curl https://api-m3waemr5lq-uc.a.run.app/pricing
 
 ## 🚧 WHAT NEEDS IMMEDIATE ATTENTION
 
-### 1. Stripe Configuration (30 minutes)
-```bash
-# Set environment variables
-firebase functions:config:set \
-  stripe.secret_key="sk_live_..." \
-  stripe.webhook_secret="whsec_..." \
-  stripe.price_pro_monthly="price_..." \
-  stripe.price_team_monthly="price_..."
-```
+### 1. Enterprise Dashboard UI (6 hours)
+- Wire React/Vue hooks into a management console that surfaces shared timers, analytics, and billing controls.
+- Add administrative views for SSO providers, templates, and scheduled workflows using the new backend APIs.
 
-### 2. User Registration Flow (2 hours)
-- Simple Firebase Auth signup form
-- Email verification
-- API key generation on first login
+### 2. Metered Billing Observability (3 hours)
+- Build reporting widgets that read `/teams/:teamId/metrics` and `/teams/:teamId/billing/invoices` for finance review.
+- Schedule smoke tests that call `/teams/:teamId/billing/usage` to verify metered events sync with Stripe.
 
-### 3. Basic Web Dashboard (4 hours)
-- React app showing user's timers
-- API key management interface
-- Upgrade to Pro button
+### 3. QA & Hardening (5 hours)
+- Expand integration tests to cover cron schedule execution, dependency unlocks, and retry backoff flows.
+- Add contract tests for the SSO assertion endpoint and payment method rotation APIs.
 
 ## 🎯 LAUNCH READINESS CHECKLIST
 
@@ -172,4 +185,4 @@ firebase functions:config:set \
 
 ---
 
-*Last updated: 2025-07-13 - System is live and ready for launch*
+*Last updated: 2025-11-04 - Phase 4 enterprise features complete and ready for UI polish*
