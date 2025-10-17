@@ -7,11 +7,12 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
 // Import middleware and utilities
-const { authenticateUser, requireTier, setDb } = require('./middleware/auth');
+const { authenticateUser, requireTier, requireTeamRole, hasTeamRole, loadUserTeams, setDb } = require('./middleware/auth');
 const { dynamicRateLimiter, expensiveOperationLimiter } = require('./middleware/rateLimiter');
 const { usageTrackingMiddleware, checkTimerLimit, checkConcurrentTimerLimit, trackTimerCreation } = require('./utils/usageTracking');
 const { createApiKey, getUserApiKeys, revokeApiKey, updateApiKeyName, getApiKeyStats } = require('./utils/apiKey');
-const { createCheckoutSession, handleSubscriptionCreated, handleSubscriptionCanceled, createBillingPortalSession, getUserSubscription, PRICES } = require('./utils/stripe');
+const { createCheckoutSession, handleSubscriptionCreated, handleSubscriptionCanceled, createBillingPortalSession, getUserSubscription, PRICES, linkTeamBilling } = require('./utils/stripe');
+const { createTeam, addMember, updateMemberRole, removeMember, listTeamsForUser, getTeam, createInvitation, listInvitations, acceptInvitation, revokeInvitation } = require('./utils/teamService');
 
 let db;
 
@@ -30,6 +31,188 @@ app.use(express.json());
 app.use(usageTrackingMiddleware);
 app.use(authenticateUser);
 app.use(dynamicRateLimiter);
+
+// Team management endpoints (Phase 4 foundation)
+app.post('/teams', requireTier('team'), async (req, res) => {
+    try {
+        const team = await createTeam({
+            name: req.body.name,
+            ownerId: req.user.id,
+            plan: req.body.plan || req.user.tier || 'team',
+            metadata: req.body.metadata || {},
+        });
+        if (req.body.billing) {
+            await linkTeamBilling(team.id, {
+                ...req.body.billing,
+                updatedBy: req.user.id,
+            });
+        }
+
+        const invitations = req.body.invitations;
+        if (Array.isArray(invitations) && invitations.length > 0) {
+            await Promise.all(
+                invitations.map((invite) =>
+                    createInvitation(team.id, {
+                        email: invite.email,
+                        role: invite.role,
+                        inviterId: req.user.id,
+                        expiresInMinutes: invite.expiresInMinutes,
+                    })
+                )
+            );
+        }
+
+        res.json({ success: true, team });
+    } catch (error) {
+        console.error('Create team error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/teams', async (req, res) => {
+    try {
+        const teams = await listTeamsForUser(req.user.id);
+        res.json({ success: true, teams });
+    } catch (error) {
+        console.error('List teams error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/teams/:teamId/members', requireTeamRole((req) => req.params.teamId, ['admin', 'owner']), async (req, res) => {
+    const { teamId } = req.params;
+    const { userId, role } = req.body;
+    try {
+        await addMember(teamId, userId, role || 'member', req.user.id);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Add member error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.patch('/teams/:teamId/members/:memberId', requireTeamRole((req) => req.params.teamId, ['admin', 'owner']), async (req, res) => {
+    const { teamId, memberId } = req.params;
+    const { role } = req.body;
+    try {
+        await updateMemberRole(teamId, memberId, role || 'member');
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Update member role error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete('/teams/:teamId/members/:memberId', requireTeamRole((req) => req.params.teamId, ['admin', 'owner']), async (req, res) => {
+    const { teamId, memberId } = req.params;
+    try {
+        await removeMember(teamId, memberId);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Remove member error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/teams/:teamId/invitations', requireTeamRole((req) => req.params.teamId, ['admin', 'owner']), async (req, res) => {
+    const { teamId } = req.params;
+    const { email, role, expiresInMinutes } = req.body || {};
+
+    if (!email) {
+        return res.status(400).json({ success: false, error: 'Email is required' });
+    }
+
+    try {
+        const invitation = await createInvitation(teamId, {
+            email,
+            role,
+            inviterId: req.user.id,
+            expiresInMinutes,
+        });
+
+        res.json({ success: true, invitation });
+    } catch (error) {
+        console.error('Create invitation error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/teams/:teamId/invitations', requireTeamRole((req) => req.params.teamId, ['admin', 'owner']), async (req, res) => {
+    const { teamId } = req.params;
+    try {
+        const invitations = await listInvitations(teamId);
+        res.json({ success: true, invitations });
+    } catch (error) {
+        console.error('List invitations error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete('/teams/:teamId/invitations/:token', requireTeamRole((req) => req.params.teamId, ['admin', 'owner']), async (req, res) => {
+    const { teamId, token } = req.params;
+    try {
+        await revokeInvitation(teamId, token, req.user.id);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Revoke invitation error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/teams/invitations/:token/accept', async (req, res) => {
+    const { token } = req.params;
+    try {
+        const result = await acceptInvitation(token, {
+            userId: req.user.id,
+            email: req.user.email || req.body?.email,
+        });
+        res.json({ success: true, membership: result });
+    } catch (error) {
+        console.error('Accept invitation error:', error);
+        res.status(400).json({ success: false, error: error.message });
+    }
+});
+
+app.patch('/teams/:teamId/billing', requireTeamRole((req) => req.params.teamId, ['owner']), async (req, res) => {
+    const { teamId } = req.params;
+    try {
+        await linkTeamBilling(teamId, { ...req.body, updatedBy: req.user.id });
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Update team billing error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/teams/:teamId/billing/checkout-session', requireTeamRole((req) => req.params.teamId, ['owner']), async (req, res) => {
+    const { teamId } = req.params;
+    const { priceId, successUrl, cancelUrl } = req.body || {};
+
+    if (!priceId || !successUrl || !cancelUrl) {
+        return res.status(400).json({ success: false, error: 'priceId, successUrl, and cancelUrl are required' });
+    }
+
+    try {
+        const team = await getTeam(teamId);
+        if (!team) {
+            return res.status(404).json({ success: false, error: 'Team not found' });
+        }
+
+        const session = await createCheckoutSession(
+            req.user.id,
+            req.user.email || req.body?.customerEmail,
+            priceId,
+            successUrl,
+            cancelUrl,
+            { teamId }
+        );
+
+        res.json({ success: true, session });
+    } catch (error) {
+        console.error('Create team checkout session error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 // Real Timer class with Firestore
 class RealTimer {
@@ -210,14 +393,22 @@ app.post('/timers', expensiveOperationLimiter, async (req, res) => {
             });
         }
 
+        const requestedTeam = req.body.team;
+        const inferredTeam = requestedTeam || (Array.isArray(req.user.teams) && req.user.teams.length === 1 ? req.user.teams[0].id : undefined);
+        if (requestedTeam && !hasTeamRole(req.user, requestedTeam, ['member', 'admin', 'owner'])) {
+            return res.status(403).json({ success: false, error: 'You do not have access to this team.' });
+        }
+
         // Add user context to timer creation
         const timerConfig = {
             ...req.body,
+            team: inferredTeam,
             agent_id: req.body.agent_id || req.user.id,
             metadata: {
                 ...req.body.metadata,
                 createdBy: req.user.id,
-                userTier: req.user.tier
+                userTier: req.user.tier,
+                team: inferredTeam
             }
         };
 
@@ -251,7 +442,13 @@ app.post('/timers', expensiveOperationLimiter, async (req, res) => {
 app.get('/timers', async (req, res) => {
     try {
         const timers = await RealTimer.list(req.query);
-        res.json({ success: true, timers, count: timers.length });
+        const visibleTimers = timers.filter((timer) => {
+            if (!timer.team) {
+                return timer.agentId === req.user.id;
+            }
+            return hasTeamRole(req.user, timer.team, ['member', 'admin', 'owner']);
+        });
+        res.json({ success: true, timers: visibleTimers, count: visibleTimers.length });
     } catch (error) {
         console.error('List timers error:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -264,6 +461,12 @@ app.get('/timers/:id', async (req, res) => {
         if (!timer) {
             return res.status(404).json({ success: false, error: 'Timer not found' });
         }
+        if (timer.team && !hasTeamRole(req.user, timer.team, ['member', 'admin', 'owner'])) {
+            return res.status(403).json({ success: false, error: 'You do not have access to this timer.' });
+        }
+        if (!timer.team && timer.agentId && timer.agentId !== req.user.id) {
+            return res.status(403).json({ success: false, error: 'You do not have access to this timer.' });
+        }
         res.json({ success: true, timer });
     } catch (error) {
         console.error('Get timer error:', error);
@@ -273,6 +476,16 @@ app.get('/timers/:id', async (req, res) => {
 
 app.delete('/timers/:id', async (req, res) => {
     try {
+        const timer = await RealTimer.get(req.params.id);
+        if (!timer) {
+            return res.status(404).json({ success: false, error: 'Timer not found' });
+        }
+        if (timer.team && !hasTeamRole(req.user, timer.team, ['admin', 'owner'])) {
+            return res.status(403).json({ success: false, error: 'You do not have permission to delete this timer.' });
+        }
+        if (!timer.team && timer.agentId && timer.agentId !== req.user.id) {
+            return res.status(403).json({ success: false, error: 'You do not have permission to delete this timer.' });
+        }
         await RealTimer.delete(req.params.id);
         res.json({ success: true });
     } catch (error) {
@@ -283,10 +496,16 @@ app.delete('/timers/:id', async (req, res) => {
 
 app.post('/quick/wait', async (req, res) => {
     try {
+        const requestedTeam = req.body.team;
+        if (requestedTeam && !hasTeamRole(req.user, requestedTeam, ['member', 'admin', 'owner'])) {
+            return res.status(403).json({ success: false, error: 'You do not have access to this team.' });
+        }
+        const inferredTeam = requestedTeam || (Array.isArray(req.user.teams) && req.user.teams.length === 1 ? req.user.teams[0].id : undefined);
         const timer = await RealTimer.create({
             duration: req.body.duration,
             name: req.body.name || `wait_${Date.now()}`,
             agent_id: req.body.agent_id || 'quick_wait_agent',
+            team: inferredTeam,
             events: req.body.callback ? {
                 on_expire: { webhook: req.body.callback }
             } : {}

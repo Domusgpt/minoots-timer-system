@@ -1,20 +1,69 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function teamMembership(teamId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+    }
+
+    function hasTeamRole(teamId, roles) {
+      return teamMembership(teamId) && get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role in roles;
+    }
+
+    function authEmailLower() {
+      return request.auth != null && request.auth.token.email != null ? lower(request.auth.token.email) : null;
+    }
+
+    match /teams/{teamId} {
+      allow create: if isSignedIn();
+      allow read: if isSignedIn() && teamMembership(teamId);
+      allow update, delete: if isSignedIn() && hasTeamRole(teamId, ['owner']);
+
+      match /members/{memberId} {
+        allow read: if isSignedIn() && teamMembership(teamId);
+        allow create, update: if isSignedIn() && hasTeamRole(teamId, ['admin', 'owner']);
+        allow delete: if isSignedIn() && (hasTeamRole(teamId, ['owner']) || request.auth.uid == memberId);
+      }
+
+      match /invitations/{invitationId} {
+        allow read: if isSignedIn() && hasTeamRole(teamId, ['admin', 'owner']);
+        allow create, update, delete: if isSignedIn() && hasTeamRole(teamId, ['admin', 'owner']);
+      }
+    }
+
     match /timers/{timerId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && (!resource.data.team || teamMembership(resource.data.team));
+      allow create: if isSignedIn() && (!request.resource.data.team || hasTeamRole(request.resource.data.team, ['member', 'admin', 'owner']));
+      allow update, delete: if isSignedIn() && (
+        (!resource.data.team && request.auth.uid == resource.data.agentId) ||
+        (resource.data.team != null && hasTeamRole(resource.data.team, ['admin', 'owner']))
+      );
     }
-    
+
     match /timer_expirations/{timerId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
     }
-    
+
     match /timer_logs/{logId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
     }
-    
+
     match /team_broadcasts/{broadcastId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && teamMembership(resource.data.team);
+      allow write: if isSignedIn() && hasTeamRole(resource.data.team, ['admin', 'owner']);
+    }
+
+    match /team_invitations/{token} {
+      allow get: if isSignedIn() && resource.data.email == authEmailLower();
+      allow update: if false;
+      allow delete: if false;
+      allow list: if false;
+      allow create: if false;
     }
   }
 }

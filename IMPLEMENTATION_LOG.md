@@ -18,6 +18,54 @@
 
 ## 📝 DETAILED IMPLEMENTATION LOG
 
+### Entry #7: Phase 3 SDK enhancements & Phase 4 RBAC lift-off - COMPLETED
+**Time:** 2025-11-03 09:30-15:45 UTC
+**Task:** Finish the remaining Phase 3 developer tooling objectives and bootstrap Phase 4 team/RBAC infrastructure.
+**Status:** ✅ COMPLETED
+
+**Highlights:**
+1. **Node.js SDK resiliency** – Added exponential backoff, retry hooks, and observability callbacks with full test coverage (`npm test`).
+2. **Framework bindings** – Shipped first-party React (`sdk/react/useMinootsTimer.ts`) and Vue (`sdk/vue/useMinootsTimer.ts`) helpers for agent dashboards.
+3. **Python agent integrations** – Published LangChain `AtoTimerTool` and LlamaIndex `FunctionTool` helpers plus optional extras in `pyproject.toml`.
+4. **CI automation** – Authored a reusable GitHub Action (`.github/actions/minoots-timer`) that schedules and awaits timers inside workflows.
+5. **Slack channel activation** – Added `integrations/slack` slash command reference implementation for `/ato` chats.
+6. **Team RBAC foundation** – Introduced Firestore team collections, REST endpoints, stricter security rules, and middleware that loads team roles on every request.
+
+**Artifacts & Tests:**
+- ✅ `npm test`
+- Updated `firestore.rules`, `functions/index.js`, `functions/middleware/auth.js`, and new `functions/utils/teamService.js` for enforcement.
+- Extended SDK documentation plus Python optional dependencies for LangChain/LlamaIndex support.
+
+**Next Steps:**
+- Wire invitation and acceptance flows for teams (email + token handling).
+- Link Stripe customer data to teams so upgrades auto-provision RBAC entitlements.
+- Add CI smoke tests for the Python integrations once optional dependencies are cached.
+
+---
+
+### Entry #8: Phase 4 invitations, Stripe linkage, and Python test coverage - COMPLETED
+**Time:** 2025-11-05 08:10-13:20 UTC
+**Task:** Deliver the remaining Phase 4 foundations by activating team invitation workflows, persisting team-level billing metadata, and adding regression coverage for the new Python agent integrations.
+**Status:** ✅ COMPLETED
+
+**Highlights:**
+1. **Invitations API** – Added REST endpoints for invite issuance, listing, acceptance, and revocation with supporting Firestore persistence (`functions/index.js`, `functions/utils/teamService.js`).
+2. **Security tightening** – Updated Firestore rules to scope team invite visibility and required admin/owner roles for invitation CRUD operations (`firestore.rules`).
+3. **Stripe ↔ team bridge** – Extended Stripe utilities to track team billing metadata and wired checkout sessions to capture `teamId` so webhook handlers keep team docs in sync (`functions/utils/stripe.js`).
+4. **Team billing endpoints** – Introduced `/teams/:id/billing` management routes so owners can attach Stripe customer/subscription IDs or request new checkout sessions (`functions/index.js`).
+5. **Python integration tests** – Created pytest suites for LangChain and LlamaIndex helpers with stubbed dependencies plus documented the workflow in the SDK README (`sdk/python/tests/`, `sdk/python/README.md`, `sdk/python/pyproject.toml`).
+
+**Artifacts & Tests:**
+- ✅ `pytest` *(sdk/python)*
+- Updated docs: Implementation log, current status summary, master plan, and Python SDK README reflect the completed Phase 4 work items.
+
+**Next Steps:**
+- Build invitation email delivery + front-end accept screens once the marketing site refresh lands.
+- Attach Stripe subscription hooks to downstream provisioning (seat counts, premium feature toggles).
+- Expand automated coverage to the React/Vue hooks and Slack/GitHub integrations.
+
+---
+
 ### Entry #1: Authentication Implementation - COMPLETED
 **Time:** 2025-07-13 10:30-11:00 UTC
 **Task:** Implement Firebase Auth and API key system
@@ -435,3 +483,37 @@ Next update due: After auth implementation complete
 
 **Tests Performed:**
 - ✅ `npm test` *(services/action-orchestrator)*
+
+### Entry #17: Phase 3 Kickoff – SDK Modernization - COMPLETED
+**Time:** 2025-10-26 16:10-18:40 UTC
+**Task:** Launch Phase 3 developer tooling by upgrading the JavaScript SDK and scaffolding the Python client surface.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. ✅ Refactored the Node.js SDK with injectable fetch support, structured error classes, timeout handling, and SSE parsing resiliance.
+2. ✅ Authored `minoots-sdk.d.ts`, refreshed package metadata, and expanded README guidance for both JavaScript and TypeScript consumers.
+3. ✅ Replaced the live-API tests with a deterministic fetch stub harness so `npm test` runs offline while asserting payload correctness.
+4. ✅ Bootstrapped the async Python SDK (`sdk/python/`) using httpx, including timer helpers, SSE streaming, and shared duration utilities.
+5. ✅ Documented the updated developer workflow in the SDK README and noted follow-up tasks in the roadmap.
+
+**Tests Performed:**
+- ✅ `npm test` *(sdk/)*
+
+**Next Steps:**
+- Publish the Node.js package and align the MCP toolchain on the typed surface.
+- Ship a synchronous convenience facade for the Python client building on the new test harness.
+- Begin CLI v2 design leveraging the shared SDK abstractions.
+
+### Entry #18: Phase 3 Developer Tooling – Python HTTP harness - COMPLETED
+**Time:** 2025-10-27 14:00-15:20 UTC
+**Task:** Extend the Python SDK with mocked HTTP coverage so contributors can iterate offline and trust the error surface.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Introduced `sdk/python/tests/test_client.py` with respx-backed fixtures that exercise happy-path scheduling, API error propagation, and timeout translation logic.
+2. Expanded the test optional dependencies to include `pytest-asyncio` and `respx`, ensuring contributors can install the harness with `pip install -e .[test]`.
+3. Refreshed the Python SDK README to document the new coverage and reinforce the offline-first test workflow.
+
+**Tests Performed:**
+- ✅ `pip install -e .[test]` *(sdk/python)*
+- ✅ `pytest` *(sdk/python)*

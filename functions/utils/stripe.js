@@ -35,10 +35,26 @@ const PRICES = {
   team_yearly: process.env.STRIPE_PRICE_TEAM_YEARLY || 'price_team_yearly'
 };
 
+const toTimestamp = (value) => {
+  if (!value) return null;
+  if (value instanceof admin.firestore.Timestamp) return value;
+  if (value instanceof Date) return admin.firestore.Timestamp.fromDate(value);
+  if (typeof value === 'number') {
+    return admin.firestore.Timestamp.fromMillis(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return admin.firestore.Timestamp.fromDate(parsed);
+    }
+  }
+  return null;
+};
+
 /**
  * Create a Stripe checkout session for subscription upgrade
  */
-async function createCheckoutSession(userId, userEmail, priceId, successUrl, cancelUrl) {
+async function createCheckoutSession(userId, userEmail, priceId, successUrl, cancelUrl, options = {}) {
   try {
     // Validate price ID
     if (!Object.values(PRICES).includes(priceId)) {
@@ -47,6 +63,19 @@ async function createCheckoutSession(userId, userEmail, priceId, successUrl, can
 
     // Create or get Stripe customer
     let customerId = await getOrCreateCustomer(userId, userEmail);
+
+    const metadata = {
+      userId: userId,
+      priceId: priceId,
+    };
+
+    if (options.teamId) {
+      metadata.teamId = options.teamId;
+    }
+
+    if (options.metadata) {
+      Object.assign(metadata, options.metadata);
+    }
 
     // Create checkout session
     const session = await getStripe().checkout.sessions.create({
@@ -59,10 +88,7 @@ async function createCheckoutSession(userId, userEmail, priceId, successUrl, can
       mode: 'subscription',
       success_url: successUrl,
       cancel_url: cancelUrl,
-      metadata: {
-        userId: userId,
-        priceId: priceId
-      },
+      metadata,
       allow_promotion_codes: true,
       billing_address_collection: 'auto',
       automatic_tax: {
@@ -78,6 +104,37 @@ async function createCheckoutSession(userId, userEmail, priceId, successUrl, can
     console.error('Stripe checkout session error:', error);
     throw new Error(`Failed to create checkout session: ${error.message}`);
   }
+}
+
+async function linkTeamBilling(teamId, billingInfo = {}) {
+  const db = getDb();
+  const update = {
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  const values = {
+    stripeCustomerId: billingInfo.stripeCustomerId ?? billingInfo.customerId,
+    subscriptionId: billingInfo.subscriptionId,
+    subscriptionStatus: billingInfo.subscriptionStatus ?? billingInfo.status,
+    priceId: billingInfo.priceId ?? billingInfo.planPriceId,
+    currentPeriodStart: toTimestamp(billingInfo.currentPeriodStart),
+    currentPeriodEnd: toTimestamp(billingInfo.currentPeriodEnd),
+    updatedBy: billingInfo.updatedBy || null,
+    lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  if (billingInfo.canceledAt) {
+    values.canceledAt = toTimestamp(billingInfo.canceledAt);
+  }
+
+  Object.entries(values).forEach(([key, value]) => {
+    if (value !== undefined) {
+      update[`billing.${key}`] = value;
+    }
+  });
+
+  await db.collection('teams').doc(teamId).set(update, { merge: true });
+  return values;
 }
 
 /**
@@ -179,6 +236,18 @@ async function handleSubscriptionCreated(subscription) {
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
 
+    const teamId = subscription.metadata?.teamId || subscription.metadata?.team_id;
+    if (teamId) {
+      await linkTeamBilling(teamId, {
+        customerId,
+        subscriptionId: subscription.id,
+        status: subscription.status,
+        priceId,
+        currentPeriodStart: subscription.current_period_start * 1000,
+        currentPeriodEnd: subscription.current_period_end * 1000,
+      });
+    }
+
   } catch (error) {
     console.error('Subscription creation handler error:', error);
   }
@@ -224,6 +293,16 @@ async function handleSubscriptionCanceled(subscription) {
       subscriptionId: subscription.id,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    const teamId = subscription.metadata?.teamId || subscription.metadata?.team_id;
+    if (teamId) {
+      await linkTeamBilling(teamId, {
+        customerId,
+        subscriptionId: subscription.id,
+        status: 'canceled',
+        canceledAt: new Date(),
+      });
+    }
 
   } catch (error) {
     console.error('Subscription cancellation handler error:', error);
@@ -299,9 +378,11 @@ async function getUserSubscription(userId) {
 
 module.exports = {
   createCheckoutSession,
+  getOrCreateCustomer,
   handleSubscriptionCreated,
   handleSubscriptionCanceled,
   createBillingPortalSession,
   getUserSubscription,
+  linkTeamBilling,
   PRICES
 };
