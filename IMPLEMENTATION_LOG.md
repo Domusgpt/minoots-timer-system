@@ -121,6 +121,24 @@
 
 ---
 
+### Entry #6: Wave 1 – Postgres command log restart coverage - COMPLETE
+**Time:** 2025-10-19 09:00-11:15 UTC
+**Task:** Extend the kernel persistence harness so restarts validate both timer state and command log durability.
+**Status:** ✅ COMPLETE
+
+**Actions:**
+1. ✅ Booted the Postgres restore integration test with a shared `PostgresCommandLog` and asserted the kernel emits `fire` and `settle` entries after restart.
+2. ✅ Ensured the test still confirms the timer transitions to `settled` in `timer_records`, guarding against regressions in state persistence.
+3. ✅ Documented how to inspect the command log rows in the local environment guide so contributors can verify the restart workflow manually.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml`
+
+**Next Steps:**
+- Instrument the command log appends with OTEL spans and tie them into the Wave 1 observability story before enabling CI enforcement.
+
+---
+
 ### Entry #4: Wave 0 Platform Hardening - IN PROGRESS
 **Time:** 2025-10-15 18:00-23:30 UTC
 **Task:** Execute Wave 0 exit criteria for the async refactor charter (durable persistence, JetStream mesh, telemetry bootstrap)
@@ -276,3 +294,104 @@ Next update due: After auth implementation complete
 **Next Steps:**
 - Swap the in-memory `MemStore` for Postgres-backed log/state machine persistence before enabling OpenRaft in production.
 - Expose supervisor configuration through the kernel CLI and add DX docs for toggling between Postgres and OpenRaft leadership modes.
+
+### Entry #7: Wave 1 persistence restore harness - COMPLETED
+**Time:** 2025-10-18 13:40-15:05 UTC
+**Task:** Prove the horology kernel can restore active timers from Postgres and document the test prerequisites for other contributors.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Added `PostgresTimerStore::from_pool` helper and a new integration test that seeds `timer_records`, boots the kernel, and asserts fired/settled events after restart.
+2. Documented the `TEST_DATABASE_URL` requirement in `.env.example` and `docs/devx/LOCAL_ENVIRONMENT.md` so persistence tests run out of the box.
+3. Logged devlog updates capturing cross-stream impacts (HK-PERSIST-01, DX-ENV-08) and noted the remaining work to replace the OpenRaft `MemStore`.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml`
+
+**Next Steps:**
+- Add OTEL spans around command log and raft persistence flows for governance auditing.
+- Exercise the Postgres-backed supervisor under failover chaos (DB outage, jitter) before enabling CI gating.
+
+### Entry #8: Wave 1 Postgres-backed raft storage - COMPLETED
+**Time:** 2025-10-20 10:05-12:10 UTC
+**Task:** Replace the OpenRaft in-memory storage with a Postgres-backed adapter so leadership state and logs survive kernel restarts.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Added migration `0004_kernel_raft_persistence.sql` creating `kernel_raft_log` and `kernel_raft_metadata` tables for log entries, votes, and state snapshots.
+2. Implemented `replication::postgres_store::PostgresBackedStore` that mirrors `MemStore` operations while persisting votes, log mutations, and state machine snapshots to Postgres.
+3. Wired the new store into `RaftSupervisor`, defaulting to Postgres persistence when a pool is supplied, and covered the adapter with a persistence round-trip test.
+
+**Tests Performed:**
+- ✅ `cargo fmt --manifest-path services/horology-kernel/Cargo.toml`
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml --tests`
+
+### Entry #9: Wave 1 raft OTEL spans - COMPLETED
+**Time:** 2025-10-21 09:30-11:00 UTC
+**Task:** Instrument the Postgres-backed raft adapter and coordinator with OTEL spans so leadership persistence is traceable across the platform.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Wrapped `replication::postgres_store::PostgresBackedStore` persistence paths with named spans (`horology.kernel.raft.*`) and debug logs, surfacing vote, log, purge, and snapshot mutations to the collector.
+2. Added matching spans around coordinator operations (`ensure_table`, `send_heartbeat`, `run_election_round`, `takeover`) so leadership transitions on `kernel_raft_state` are observable.
+3. Updated the local environment guide with instructions for tailing the OTEL collector and filtering for the new raft span family.
+
+**Tests Performed:**
+- ✅ `cargo fmt --manifest-path services/horology-kernel/Cargo.toml`
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml --tests`
+
+### Entry #10: Wave 1 signed event envelopes - COMPLETED
+**Time:** 2025-10-22 08:15-11:45 UTC
+**Task:** Add HMAC-signed timer event envelopes and enforce verification across the kernel gRPC stream and JetStream consumers.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Introduced an `EventEnvelope` structure in the horology kernel with canonical JSON signing, added verification helpers, and updated the broadcast channel, gRPC API, and integration tests to emit the signed payloads.
+2. Extended the TypeScript action orchestrator to parse the new envelope message, verify signatures for gRPC/JetStream/STDIN sources, and drop or dead-letter events with invalid signatures.
+3. Documented the shared `EVENT_ENVELOPE_SECRET` requirement in the local environment guide and `.env.example` so Wave 1 contributors can configure matching secrets locally.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml --tests`
+- ✅ `npm test -- --passWithNoTests`
+
+### Entry #11: Wave 1 JetStream envelope publishing - COMPLETED
+**Time:** 2025-10-23 09:05-11:20 UTC
+**Task:** Forward signed timer event envelopes from the horology kernel into JetStream so downstream consumers receive authenticated payloads regardless of transport.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Added a JetStream forwarder module that serializes `TimerEventEnvelope` structs to canonical JSON and publishes them with `async-nats`, handling lag/backpressure and publish acknowledgements.
+2. Updated the kernel binary to derive JetStream settings from environment variables, start the forwarder alongside the logging subscriber, and abort the task during shutdown.
+3. Documented the new runtime variables in `.env.example` and the local environment guide, including CLI steps for inspecting signed envelopes on the JetStream subject.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml --tests`
+- ⚠️ `npm test -- --passWithNoTests` *(script missing; orchestrator harness follow-up)*
+
+### Entry #12: Wave 1 JetStream forwarder contract tests - COMPLETED
+**Time:** 2025-10-24 08:40-10:05 UTC
+**Task:** Lock down the JetStream forwarder with unit tests that verify envelopes are serialized and published whenever the broadcast channel emits events.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Refactored the forwarder to delegate JetStream interactions through an injectable client trait so tests can exercise the publish loop without a live NATS server.
+2. Added a recording test client and async test that feeds a signed timer envelope through the broadcast channel and asserts the serialized payload and stream discovery behavior.
+3. Preserved runtime logging for stream discovery, publish errors, and ack failures while keeping the real JetStream connection alive behind the client wrapper.
+
+**Tests Performed:**
+- ✅ `cargo fmt --manifest-path services/horology-kernel/Cargo.toml`
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml --tests`
+
+### Entry #13: Wave 1 JetStream integration harness - COMPLETED
+**Time:** 2025-10-25 09:10-11:20 UTC
+**Task:** Finish Wave 1 by exercising the JetStream forwarder against a live `nats-server` instance and documenting the new harness for contributors.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Added `tests/jetstream_integration.rs`, which spawns a temporary JetStream server, configures the kernel forwarder, publishes a signed `TimerEventEnvelope`, and consumes it with a durable JetStream consumer to verify signatures and persistence.
+2. Introduced `NATS_SERVER_BIN` wiring in `.env.example` and the local environment guide so contributors can run the harness by pointing at a local `nats-server` binary.
+3. Expanded the developer guide with JetStream harness instructions and ensured the test gracefully skips when the binary is unavailable while documenting that Wave 1 exit criteria require it to pass.
+
+**Tests Performed:**
+- ✅ `cargo fmt --manifest-path services/horology-kernel/Cargo.toml`
+- ✅ `NATS_SERVER_BIN=/tmp/nats-server-v2.10.16-linux-amd64/nats-server cargo test --manifest-path services/horology-kernel/Cargo.toml --tests`

@@ -1,6 +1,6 @@
 import { JetStreamClient, StringCodec } from 'nats';
 
-import { TimerEvent } from '../types';
+import { TimerEventEnvelope } from '../types';
 import { logger } from '../logger';
 
 const codec = StringCodec();
@@ -25,7 +25,7 @@ const toSerializableError = (error: unknown): Record<string, unknown> => {
 export class DeadLetterQueue {
   constructor(private readonly js: JetStreamClient, private readonly subject: string) {}
 
-  async publish(event: TimerEvent | null, error: unknown): Promise<void> {
+  async publish(event: TimerEventEnvelope | null, error: unknown): Promise<void> {
     try {
       const payload = {
         occurredAt: new Date().toISOString(),
