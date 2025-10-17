@@ -1,319 +1,276 @@
-# MINOOTS Node.js SDK
+# MINOOTS Node.js & Python SDKs
 
-Official Node.js SDK for the MINOOTS Independent Timer System.
+Developer tooling for the MINOOTS Independent Timer System. Phase 3 kicks off with a modernized Node.js SDK (typed, testable,
+stream-friendly) and a brand-new Python async client skeleton.
 
-## Installation
+## Node.js SDK
+
+### Installation
 
 ```bash
 npm install minoots-sdk
 ```
 
-Or use directly from this repository:
+or use it directly from the repository for local development:
 
 ```javascript
 const MinootsSDK = require('./minoots-sdk.js');
 ```
 
-## Quick Start
+### Quick Start (JavaScript)
 
 ```javascript
 const MinootsSDK = require('minoots-sdk');
 
-// Initialize SDK
 const minoots = new MinootsSDK({
-    agentId: 'my_agent',
-    team: 'my_team'
+  apiKey: process.env.MINOOTS_API_KEY,
+  agentId: 'my_agent',
+  team: 'my_team'
 });
 
-// Create a timer
-const timer = await minoots.createTimer({
-    name: 'my_task',
-    duration: '30s'
-});
+async function main() {
+  await minoots.health();
 
-// Monitor progress
-const status = await minoots.getTimer(timer.timer.id);
-console.log(`Progress: ${Math.round(status.timer.progress * 100)}%`);
+  const { timer } = await minoots.createTimer({
+    name: 'data_processing',
+    duration: '5m',
+    metadata: { correlationId: 'abc123' }
+  });
+
+  const finalTimer = await minoots.pollTimer(timer.id, 1000);
+  console.log(`Timer ${finalTimer.id} finished with status ${finalTimer.status}`);
+}
+
+main().catch(console.error);
 ```
 
-## API Reference
+### TypeScript Support
 
-### Constructor Options
+`minoots-sdk` now ships first-class type definitions with helpful builders:
 
-```javascript
-const minoots = new MinootsSDK({
-    baseURL: 'https://api-m3waemr5lq-uc.a.run.app',  // Optional: Custom API URL
-    agentId: 'my_agent',                               // Optional: Default agent ID
-    team: 'my_team',                                   // Optional: Default team
-    timeout: 10000                                     // Optional: Request timeout (ms)
+```typescript
+import MinootsSDK, { Timer, DurationInput } from 'minoots-sdk';
+
+const client = new MinootsSDK({
+  apiKey: process.env.MINOOTS_API_KEY,
+  agentId: 'ts_agent',
 });
+
+async function schedule(duration: DurationInput): Promise<Timer> {
+  const response = await client.createTimer({
+    name: 'ts_task',
+    duration,
+    metadata: { type: 'typescript' },
+  });
+
+  return client.waitFor(duration, { pollIntervalMs: 500 });
+}
 ```
 
 ### Core Methods
 
-#### `health()`
-Check API health status.
+- `health()` – Verify API status.
+- `createTimer()` / `createTimerWithWebhook()` – Create timers with optional webhook payloads.
+- `quickWait()` – Fire-and-forget timers with sensible defaults.
+- `waitFor()` – Convenience helper that schedules and blocks until the timer settles.
+- `pollTimer()` – Poll an existing timer until it completes.
+- `listTimers()` / `getTimer()` / `deleteTimer()` – CRUD helpers.
+- `streamTimerEvents()` – Subscribe to Server-Sent Events for tenant-level activity.
+- `parseDuration()` / `formatTimeRemaining()` – Utility helpers for duration math.
+
+### Advanced Usage
 
 ```javascript
-const health = await minoots.health();
-// Returns: { status: 'healthy', timestamp: 1234567890, service: 'MINOOTS...' }
+// Clone with overrides without mutating the original client
+const proClient = minoots.withDefaults({ team: 'pro_team', apiKey: 'mnt_live_key' });
+
+// Stream timer events (SSE)
+const stop = proClient.streamTimerEvents('tenant-123', {
+  topics: ['timer.expired'],
+  onEvent(event) {
+    console.log('Timer event:', event);
+  },
+  onError(err) {
+    console.error('Stream error', err);
+  }
+});
+
+// Later, close the stream
+stop();
 ```
 
-#### `createTimer(config)`
-Create a new timer.
+### Retry & Observability Hooks
+
+Every client now supports exponential backoff with jitter and lifecycle hooks. Use `withRetry` to opt into automatic retries for transient errors and attach hooks for instrumentation:
 
 ```javascript
-const timer = await minoots.createTimer({
-    name: 'data_processing',
-    duration: '5m',                    // '5s', '10m', '2h', '1d' or milliseconds
-    agentId: 'optional_agent',         // Defaults to SDK agentId
-    team: 'optional_team',             // Defaults to SDK team
-    events: {                          // Optional event handlers
-        on_expire: {
-            message: 'Task completed!',
-            webhook: 'https://my-webhook.com/timer-expired',
-            data: { custom: 'data' }
-        }
+const resilient = minoots.withRetry({ attempts: 3, minTimeout: 250, maxTimeout: 2_000 });
+
+resilient.hooks.beforeRequest.push(({ url, attempt }) => {
+  console.log(`[attempt ${attempt}] -> ${url}`);
+});
+
+resilient.hooks.onRetry.push(({ error, attempt }) => {
+  console.warn(`Retrying after ${error.message} (attempt ${attempt})`);
+});
+
+const { timer } = await resilient.createTimer({ name: 'resilient', duration: '10s' });
+```
+
+### Parserator Integration Helpers (Phase 5)
+
+Parserator events can now flow directly into MINOOTS timers using first-class SDK helpers:
+
+```javascript
+// Manage Parserator ingestion pipelines
+const sources = await minoots.listParseratorSources();
+const source = await minoots.createParseratorSource(undefined, {
+  name: 'Support Inbox Summaries',
+  templateId: 'post-call-followup',
+  mapping: {
+    'metadata.customerId': 'payload.entities.customer.id',
+    'context.priority': { path: 'payload.sentiment.score', transform: 'number' },
+    duration: { fallback: '10m' },
+  },
+  scheduling: { mode: 'relative', offsetMinutes: 3 },
+});
+
+// Review queued actions generated from Parserator webhooks
+const events = await minoots.listParseratorEvents();
+const actions = await minoots.listParseratorActions();
+await minoots.updateParseratorActionStatus(undefined, actions[0].id, { status: 'completed' });
+const replayed = await minoots.replayParseratorAction(undefined, actions[0].id, {
+  id: 'act-replay',
+  scheduledFor: new Date().toISOString(),
+  notes: 'requeue after fix',
+});
+const cleanup = await minoots.deleteParseratorSource(undefined, source.id);
+console.log(`Pruned ${cleanup.eventsDeleted} events and ${cleanup.actionsDeleted} actions`);
+```
+
+The Python client mirrors these helpers:
+
+```python
+client = AsyncMinootsClient(base_url="https://api.minoots.dev", team="support-team")
+sources = await client.list_parserator_sources()
+await client.update_parserator_action_status(
+    actions[0]["id"],
+    status="completed",
+    notes="Enqueued via custom workflow",
+)
+await client.replay_parserator_action(
+    actions[0]["id"],
+    scheduled_for="2025-01-02T00:00:00Z",
+    replay_id="act-replay",
+    notes="retry with new template",
+)
+counts = await client.delete_parserator_source(sources[0]["id"])
+print(counts["events_deleted"], counts["actions_deleted"])
+```
+
+See `minoots-sdk.d.ts` and `minoots/client.py` for full method signatures and option shapes.
+
+### React Hook (`useMinootsTimer`)
+
+A first-party React hook lives in `sdk/react/useMinootsTimer.ts` for agentic UIs:
+
+```tsx
+import { useMinootsTimer } from '../react/useMinootsTimer';
+
+export function AgentTimer() {
+  const { timer, status, start, cancel } = useMinootsTimer('30s', {
+    autoStart: false,
+    onSettled(finalTimer) {
+      console.log('Timer settled', finalTimer);
     },
-    metadata: { custom: 'metadata' }   // Optional metadata
-});
-```
+  });
 
-#### `getTimer(timerId)`
-Get timer details and current status.
-
-```javascript
-const result = await minoots.getTimer('timer-id');
-const timer = result.timer;
-
-console.log(`Status: ${timer.status}`);
-console.log(`Progress: ${Math.round(timer.progress * 100)}%`);
-console.log(`Time Remaining: ${minoots.formatTimeRemaining(timer.timeRemaining)}`);
-```
-
-#### `listTimers(filters)`
-List timers with optional filtering.
-
-```javascript
-const allTimers = await minoots.listTimers();
-const myTimers = await minoots.listTimers({ agentId: 'my_agent' });
-const teamTimers = await minoots.listTimers({ team: 'my_team', status: 'running' });
-```
-
-#### `deleteTimer(timerId)`
-Delete a timer.
-
-```javascript
-await minoots.deleteTimer('timer-id');
-```
-
-### Quick Methods
-
-#### `quickWait(duration, options)`
-Create a simple wait timer.
-
-```javascript
-const timer = await minoots.quickWait('30s', {
-    name: 'optional_name',
-    callback: 'https://webhook-url.com'  // Optional webhook
-});
-```
-
-#### `waitFor(duration, agentId)`
-Create a timer and return a Promise that resolves when it expires.
-
-```javascript
-console.log('Starting wait...');
-await minoots.waitFor('10s');
-console.log('Wait completed!');
-```
-
-### Advanced Methods
-
-#### `createTimerWithWebhook(config)`
-Create a timer with webhook notification.
-
-```javascript
-const timer = await minoots.createTimerWithWebhook({
-    name: 'webhook_task',
-    duration: '1m',
-    webhook: 'https://my-api.com/webhook',
-    message: 'Task completed successfully',
-    data: { result: 'success', timestamp: Date.now() }
-});
-```
-
-#### `pollTimer(timerId, intervalMs)`
-Monitor a timer and return a Promise that resolves when it expires.
-
-```javascript
-const completedTimer = await minoots.pollTimer('timer-id', 1000); // Check every second
-console.log('Timer completed:', completedTimer.name);
-```
-
-### Team Communication
-
-#### `broadcastToTeam(teamName, message, data)`
-Send a message to all team members.
-
-```javascript
-await minoots.broadcastToTeam('my_team', 'Task completed!', {
-    priority: 'high',
-    data: { results: 'success' }
-});
-```
-
-### Utility Methods
-
-#### `parseDuration(duration)`
-Parse duration string to milliseconds.
-
-```javascript
-const ms = minoots.parseDuration('5m');  // Returns: 300000
-```
-
-#### `formatTimeRemaining(milliseconds)`
-Format milliseconds to human-readable string.
-
-```javascript
-const formatted = minoots.formatTimeRemaining(65000);  // Returns: "1m 5s"
-```
-
-## Usage Examples
-
-### Basic Timer Management
-
-```javascript
-const MinootsSDK = require('minoots-sdk');
-const minoots = new MinootsSDK({ agentId: 'data_processor' });
-
-async function processData() {
-    // Start a processing timer
-    const timer = await minoots.createTimer({
-        name: 'data_processing',
-        duration: '5m',
-        events: {
-            on_expire: {
-                message: 'Data processing completed',
-                webhook: 'https://my-api.com/processing-complete'
-            }
-        }
-    });
-
-    console.log(`Processing started: ${timer.timer.id}`);
-    
-    // Monitor progress
-    const completed = await minoots.pollTimer(timer.timer.id);
-    console.log('Processing completed!');
+  return (
+    <div>
+      <p>Status: {status}</p>
+      <button onClick={() => start()}>Start</button>
+      <button onClick={cancel}>Cancel</button>
+      {timer ? <pre>{JSON.stringify(timer, null, 2)}</pre> : null}
+    </div>
+  );
 }
 ```
 
-### Agent Coordination
+### Vue Composable (`useMinootsTimer`)
 
-```javascript
-async function coordinateAgents() {
-    const agentA = new MinootsSDK({ agentId: 'agent_a', team: 'data_team' });
-    const agentB = new MinootsSDK({ agentId: 'agent_b', team: 'data_team' });
+Vue 3 developers can drop in `sdk/vue/useMinootsTimer.ts`:
 
-    // Agent A starts first task
-    const taskA = await agentA.createTimer({
-        name: 'data_collection',
-        duration: '2m'
-    });
+```ts
+import { ref } from 'vue';
+import { useMinootsTimer } from '../vue/useMinootsTimer';
 
-    // Agent B waits then starts dependent task
-    await agentB.waitFor('30s');  // Wait 30 seconds
-    
-    const taskB = await agentB.createTimer({
-        name: 'data_analysis',
-        duration: '3m',
-        metadata: { depends_on: taskA.timer.id }
-    });
+const duration = ref('45s');
+const { timer, status, start } = useMinootsTimer(duration, {
+  autoStart: false,
+});
 
-    // Wait for both to complete
-    await Promise.all([
-        agentA.pollTimer(taskA.timer.id),
-        agentB.pollTimer(taskB.timer.id)
-    ]);
-
-    console.log('All tasks completed!');
-}
+await start();
 ```
 
-### Recurring Tasks
+### Testing
 
-```javascript
-async function setupRecurringCheck() {
-    const monitor = new MinootsSDK({ agentId: 'monitor_agent' });
-
-    // Create recurring health check
-    function scheduleNextCheck() {
-        monitor.createTimerWithWebhook({
-            name: 'health_check',
-            duration: '5m',
-            webhook: 'https://my-api.com/health-check',
-            message: 'Scheduled health check',
-            data: { next_check: Date.now() + 300000 }
-        }).then(() => {
-            // Schedule the next check when this one expires
-            setTimeout(scheduleNextCheck, 300000);  // 5 minutes
-        });
-    }
-
-    scheduleNextCheck();
-}
-```
-
-## Error Handling
-
-The SDK throws descriptive errors for various failure conditions:
-
-```javascript
-try {
-    await minoots.createTimer({ name: 'test', duration: 'invalid' });
-} catch (error) {
-    if (error.message.includes('Invalid duration')) {
-        console.log('Fix your duration format');
-    } else if (error.message.includes('Network error')) {
-        console.log('API is unreachable');
-    } else {
-        console.log('Unexpected error:', error.message);
-    }
-}
-```
-
-## Testing
-
-Run the comprehensive test suite:
+The repository ships a mocked test harness. Run it with:
 
 ```bash
 cd sdk
-node test/sdk-test.js
+npm test
 ```
 
-Run basic examples:
+The tests no longer rely on the live API; they stub fetch calls and validate request construction, error handling, and polling.
+
+## Python Async SDK (Preview)
+
+Phase 3 also introduces the first cut of an async Python client powered by `httpx`. It lives in `sdk/python/`.
+
+### Install (local development)
 
 ```bash
-node examples/basic-usage.js
+cd sdk/python
+pip install -e .
 ```
 
-Run agent coordination demos:
+Optional integrations:
 
 ```bash
-node examples/agent-coordination.js
+pip install langchain-core llama-index-core
 ```
 
-## Requirements
+### Usage
 
-- Node.js 18+ (for built-in `fetch` support)
-- Internet connection to MINOOTS API
+```python
+import asyncio
+from minoots import AsyncMinootsClient
 
-## License
+async def main():
+    async with AsyncMinootsClient(api_key="mnt_test_key") as client:
+        health = await client.health()
+        print("API status:", health["status"])
 
-Proprietary - Paul Phillips (phillips.paul.email@gmail.com)
+        timer = await client.create_timer(name="python_task", duration="30s")
+        final_timer = await client.wait_for("30s")
+        print("Timer complete:", final_timer["status"])
 
-## Support
+asyncio.run(main())
+```
 
-- GitHub Issues: https://github.com/Domusgpt/minoots-timer-system/issues
-- API Documentation: https://github.com/Domusgpt/minoots-timer-system
-- Live API: https://api-m3waemr5lq-uc.a.run.app
+The Python module currently focuses on async workflows (matching modern agent stacks) and now ships helper modules for LangChain and
+LlamaIndex integrations while sync wrappers land in a future cut.
+
+### Agent Framework Integrations
+
+- `minoots.integrations.langchain.AtoTimerTool` — LangChain tool exposing `create_timer`/`wait_for` with friendly prompts.
+- `minoots.integrations.llamaindex.create_minoots_tool` — utility that returns a `FunctionTool` for LlamaIndex agent nodes.
+
+## Contributing
+
+1. Run `npm test` inside `sdk/` after making changes.
+2. Keep the TypeScript definitions (`minoots-sdk.d.ts`) in sync with `minoots-sdk.js`.
+3. Document significant changes in the implementation log and roadmap to keep Phase 3 aligned.
+4. When changing the React/Vue hooks or Python integrations, refresh the examples above to avoid drift.
+
+Happy timing! ⏱️
