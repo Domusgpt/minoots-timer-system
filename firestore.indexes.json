@@ -15,6 +15,22 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "endTime", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "timer_replay_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "enqueuedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timer_replay_queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "processedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

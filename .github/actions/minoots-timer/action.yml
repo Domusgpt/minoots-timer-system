@@ -1,0 +1,139 @@
+name: 'MINOOTS Timer Wait'
+description: 'Schedule a MINOOTS timer and wait for completion inside a GitHub Actions workflow.'
+author: 'MINOOTS Platform Team'
+inputs:
+  api-key:
+    description: 'MINOOTS API key (mnt_...) with permission to create timers.'
+    required: true
+  duration:
+    description: 'Timer duration (e.g. 45s, 5m, 1h).'
+    required: true
+  name:
+    description: 'Optional timer name for easier debugging.'
+    required: false
+  agent-id:
+    description: 'Agent identifier propagated to the timer metadata.'
+    required: false
+  team:
+    description: 'Team identifier for RBAC-scoped timers.'
+    required: false
+  base-url:
+    description: 'Override the API base URL (defaults to production).'
+    default: 'https://api-m3waemr5lq-uc.a.run.app'
+    required: false
+  metadata:
+    description: 'JSON-encoded metadata payload to attach to the timer.'
+    required: false
+  poll-interval:
+    description: 'Polling interval (seconds) while waiting for the timer to settle.'
+    default: '5'
+    required: false
+outputs:
+  timer-id:
+    description: 'The identifier of the scheduled timer.'
+  status:
+    description: 'Final timer status (expired/completed/etc.).'
+  payload:
+    description: 'JSON payload returned by the final timer fetch.'
+runs:
+  using: 'composite'
+  steps:
+    - name: Schedule timer via MINOOTS
+      shell: bash
+      env:
+        MINOOTS_API_KEY: ${{ inputs.api-key }}
+        MINOOTS_DURATION: ${{ inputs.duration }}
+        MINOOTS_NAME: ${{ inputs.name }}
+        MINOOTS_AGENT: ${{ inputs['agent-id'] }}
+        MINOOTS_TEAM: ${{ inputs.team }}
+        MINOOTS_BASE_URL: ${{ inputs['base-url'] }}
+        MINOOTS_METADATA: ${{ inputs.metadata }}
+        MINOOTS_POLL_INTERVAL: ${{ inputs['poll-interval'] }}
+      run: |
+        node <<'NODE'
+        const baseUrl = process.env.MINOOTS_BASE_URL || 'https://api-m3waemr5lq-uc.a.run.app';
+        const apiKey = process.env.MINOOTS_API_KEY;
+        if (!apiKey) {
+          throw new Error('MINOOTS API key is required');
+        }
+        const duration = process.env.MINOOTS_DURATION;
+        if (!duration) {
+          throw new Error('Timer duration is required');
+        }
+
+        const payload = { duration };
+        if (process.env.MINOOTS_NAME) payload.name = process.env.MINOOTS_NAME;
+        if (process.env.MINOOTS_AGENT) payload.agent_id = process.env.MINOOTS_AGENT;
+        if (process.env.MINOOTS_TEAM) payload.team = process.env.MINOOTS_TEAM;
+
+        if (process.env.MINOOTS_METADATA) {
+          try {
+            payload.metadata = JSON.parse(process.env.MINOOTS_METADATA);
+          } catch (error) {
+            console.warn('Failed to parse metadata JSON – skipping metadata payload');
+          }
+        }
+
+        const headers = {
+          'content-type': 'application/json',
+          'user-agent': 'github-action/minoots-timer',
+          'x-api-key': apiKey,
+        };
+
+        async function scheduleTimer() {
+          const response = await fetch(`${baseUrl}/quick/wait`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+          });
+
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Failed to schedule timer: ${response.status} ${body}`);
+          }
+
+          return response.json();
+        }
+
+        async function pollTimer(timerId, intervalSeconds) {
+          const pollDelay = Math.max(1, Number(intervalSeconds) || 5);
+          while (true) {
+            const response = await fetch(`${baseUrl}/timers/${timerId}`, { headers });
+            if (!response.ok) {
+              const body = await response.text();
+              throw new Error(`Failed to fetch timer ${timerId}: ${response.status} ${body}`);
+            }
+            const json = await response.json();
+            const timer = json.timer || {};
+            const status = String(timer.status || '').toLowerCase();
+            const remaining = typeof timer.timeRemaining === 'number' ? timer.timeRemaining : Number.MAX_VALUE;
+            if (['expired', 'completed', 'settled', 'cancelled'].includes(status) || remaining <= 0) {
+              return json;
+            }
+            await new Promise((resolve) => setTimeout(resolve, pollDelay * 1000));
+          }
+        }
+
+        (async () => {
+          const quick = await scheduleTimer();
+          const timer = quick.timer || {};
+          const timerId = timer.id;
+          if (!timerId) {
+            throw new Error('Scheduled timer response missing id');
+          }
+
+          const pollInterval = process.env.MINOOTS_POLL_INTERVAL;
+          const finalPayload = await pollTimer(timerId, pollInterval);
+          const finalTimer = finalPayload.timer || {};
+
+          console.log(`MINOOTS timer ${timerId} settled with status ${finalTimer.status}`);
+
+          const fs = require('fs');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `timer-id=${timerId}\n`, 'utf8');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `status=${finalTimer.status || ''}\n`, 'utf8');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `payload=${JSON.stringify(finalPayload)}\n`, 'utf8');
+        })().catch((error) => {
+          console.error(error);
+          process.exit(1);
+        });
+        NODE
