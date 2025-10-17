@@ -1,7 +1,7 @@
 /**
  * MINOOTS Authentication Middleware
  * Handles both Firebase Auth tokens and API keys
- * 
+ *
  * Free endpoints: /health, /pricing (no auth required)
  * All other endpoints require authentication
  */
@@ -11,15 +11,82 @@ const admin = require('firebase-admin');
 // Initialize Firestore reference (will be set in onInit)
 let db;
 
+const ROLE_PRIORITY = { viewer: 0, member: 1, admin: 2, owner: 3 };
+
+async function ensureDb() {
+  if (!db) {
+    db = admin.firestore();
+  }
+  return db;
+}
+
+async function loadUserTeams(userId) {
+  if (!userId) return [];
+  const database = await ensureDb();
+  const snapshot = await database.collectionGroup('members').where('userId', '==', userId).get();
+  const teams = [];
+  snapshot.docs.forEach((doc) => {
+    const teamRef = doc.ref.parent.parent;
+    if (!teamRef) return;
+    const data = doc.data() || {};
+    teams.push({
+      id: teamRef.id,
+      role: data.role || 'member',
+      joinedAt: data.joinedAt,
+      inviterId: data.inviterId || null,
+    });
+  });
+  return teams;
+}
+
+async function attachTeams(user) {
+  if (!user) return user;
+  if (user.isAnonymous) {
+    user.teams = [];
+    user.rolesByTeam = {};
+    return user;
+  }
+  const teams = await loadUserTeams(user.id);
+  user.teams = teams;
+  user.rolesByTeam = teams.reduce((acc, team) => {
+    acc[team.id] = team.role;
+    return acc;
+  }, {});
+  return user;
+}
+
+function hasTeamRole(user, teamId, allowedRoles = ['member', 'admin', 'owner']) {
+  if (!teamId || !user) return false;
+  const role = user.rolesByTeam?.[teamId];
+  if (!role) return false;
+  const rank = ROLE_PRIORITY[role] ?? 0;
+  return allowedRoles.some((allowed) => rank >= (ROLE_PRIORITY[allowed] ?? 0));
+}
+
+const requireTeamRole = (resolver, roles = ['member']) => {
+  return async (req, res, next) => {
+    const teamId = typeof resolver === 'function'
+      ? resolver(req)
+      : req.params[resolver] || req.body[resolver] || req.query[resolver];
+
+    if (!teamId) {
+      return res.status(400).json({ success: false, error: 'Team identifier required for this operation.' });
+    }
+
+    if (!hasTeamRole(req.user, teamId, roles)) {
+      return res.status(403).json({ success: false, error: 'You do not have permission for this team.' });
+    }
+
+    next();
+  };
+};
+
 /**
  * Main authentication middleware
  * FREEMIUM STRATEGY: Allow anonymous usage with limits, then require auth
  */
 const authenticateUser = async (req, res, next) => {
-  // Initialize db if not already done
-  if (!db) {
-    db = admin.firestore();
-  }
+  await ensureDb();
 
   // Free endpoints that don't need auth
   const freeEndpoints = ['/health', '/pricing', '/docs'];
@@ -29,9 +96,8 @@ const authenticateUser = async (req, res, next) => {
 
   // FREEMIUM: Check if this is anonymous usage
   const isAnonymous = !req.headers['x-api-key'] && !req.headers['authorization'];
-  
+
   if (isAnonymous) {
-    // Allow anonymous usage with tracking
     const anonymousUser = await handleAnonymousUser(req, res);
     if (anonymousUser) {
       req.user = anonymousUser;
@@ -47,7 +113,7 @@ const authenticateUser = async (req, res, next) => {
     if (apiKey) {
       const user = await checkApiKey(apiKey);
       if (user) {
-        req.user = user;
+        req.user = await attachTeams(user);
         req.authMethod = 'apiKey';
         return next();
       }
@@ -56,7 +122,7 @@ const authenticateUser = async (req, res, next) => {
     // Check Firebase token
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
         error: 'You\'ve reached the anonymous usage limit! Sign up for unlimited timers.',
         anonymousLimit: true,
@@ -68,12 +134,11 @@ const authenticateUser = async (req, res, next) => {
 
     const token = authHeader.split('Bearer ')[1];
     const decodedToken = await admin.auth().verifyIdToken(token);
-    
+
     // Get user data from Firestore
     const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-    
+
     if (!userDoc.exists) {
-      // Create user if first time
       const newUser = {
         id: decodedToken.uid,
         email: decodedToken.email || '',
@@ -81,70 +146,63 @@ const authenticateUser = async (req, res, next) => {
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         lastSeen: admin.firestore.FieldValue.serverTimestamp()
       };
-      
+
       await db.collection('users').doc(decodedToken.uid).set(newUser);
-      req.user = newUser;
+      req.user = await attachTeams(newUser);
     } else {
-      // Update last seen
       await userDoc.ref.update({
         lastSeen: admin.firestore.FieldValue.serverTimestamp()
       });
-      req.user = { id: userDoc.id, ...userDoc.data() };
+      req.user = await attachTeams({ id: userDoc.id, ...userDoc.data() });
     }
-    
+
     req.authMethod = 'firebase';
     next();
   } catch (error) {
     console.error('Auth error:', error);
-    
+
     if (error.code === 'auth/id-token-expired') {
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
-        error: 'Token expired. Please refresh your authentication.' 
+        error: 'Token expired. Please refresh your authentication.'
       });
     }
-    
-    res.status(401).json({ 
+
+    res.status(401).json({
       success: false,
-      error: 'Invalid authentication credentials' 
+      error: 'Invalid authentication credentials'
     });
   }
 };
 
 /**
  * Handle anonymous users with freemium limits
- * Track usage by IP address with generous but limited access
  */
 async function handleAnonymousUser(req, res) {
   try {
     const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
     const today = new Date().toISOString().split('T')[0];
     const anonymousId = `anon_${clientIp}_${today}`;
-    
-    // Check current anonymous usage
+
     const usageDoc = await db.collection('anonymous_usage').doc(anonymousId).get();
     const currentUsage = usageDoc.exists ? usageDoc.data() : { timers: 0, requests: 0 };
-    
-    // Freemium limits for anonymous users
+
     const ANONYMOUS_LIMITS = {
       dailyTimers: 5,
       dailyRequests: 50,
-      maxDuration: '1h' // 1 hour max timer duration
+      maxDuration: '1h'
     };
-    
-    // Check if limits exceeded
+
     if (currentUsage.timers >= ANONYMOUS_LIMITS.dailyTimers) {
-      // Add soft limit warning to response headers
       res.set('X-Anonymous-Limit', 'reached');
       res.set('X-Upgrade-Message', 'Sign up for unlimited timers');
-      return null; // Require auth
+      return null;
     }
-    
+
     if (currentUsage.requests >= ANONYMOUS_LIMITS.dailyRequests) {
-      return null; // Require auth
+      return null;
     }
-    
-    // Update usage tracking
+
     await db.collection('anonymous_usage').doc(anonymousId).set({
       timers: currentUsage.timers,
       requests: (currentUsage.requests || 0) + 1,
@@ -152,24 +210,24 @@ async function handleAnonymousUser(req, res) {
       ip: clientIp,
       userAgent: req.headers['user-agent'] || 'unknown'
     }, { merge: true });
-    
-    // Add helpful headers
+
     res.set('X-Anonymous-Timers-Used', currentUsage.timers.toString());
     res.set('X-Anonymous-Timers-Remaining', (ANONYMOUS_LIMITS.dailyTimers - currentUsage.timers).toString());
     res.set('X-Upgrade-At', ANONYMOUS_LIMITS.dailyTimers.toString());
-    
-    // Return anonymous user object
+
     return {
       id: anonymousId,
       email: 'anonymous',
       tier: 'anonymous',
       limits: ANONYMOUS_LIMITS,
       usage: currentUsage,
-      isAnonymous: true
+      isAnonymous: true,
+      teams: [],
+      rolesByTeam: {}
     };
   } catch (error) {
     console.error('Anonymous user handling error:', error);
-    return null; // Fall back to requiring auth
+    return null;
   }
 }
 
@@ -178,7 +236,6 @@ async function handleAnonymousUser(req, res) {
  */
 async function checkApiKey(apiKey) {
   try {
-    // API keys should start with 'mnt_' for security
     if (!apiKey.startsWith('mnt_')) {
       return null;
     }
@@ -187,43 +244,40 @@ async function checkApiKey(apiKey) {
     if (!doc.exists) {
       return null;
     }
-    
+
     const data = doc.data();
-    
-    // Check if key is revoked
     if (data.revoked) {
       return null;
     }
-    
-    // Update usage stats
+
     await doc.ref.update({
       lastUsed: admin.firestore.FieldValue.serverTimestamp(),
       totalRequests: admin.firestore.FieldValue.increment(1)
     });
-    
-    // Return user data associated with this API key
-    return {
+
+    const user = {
       id: data.userId,
       email: data.userEmail,
       tier: data.userTier || 'free',
-      apiKeyName: data.name
+      apiKeyId: doc.id,
+      apiKeyName: data.name,
+      isApiKey: true
     };
+
+    return attachTeams(user);
   } catch (error) {
     console.error('API key check error:', error);
     return null;
   }
 }
 
-/**
- * Middleware to check if user has required tier
- */
 const requireTier = (requiredTier) => {
   const tierHierarchy = { free: 0, pro: 1, team: 2, enterprise: 3 };
-  
+
   return (req, res, next) => {
     const userTierLevel = tierHierarchy[req.user?.tier || 'free'];
     const requiredTierLevel = tierHierarchy[requiredTier];
-    
+
     if (userTierLevel >= requiredTierLevel) {
       next();
     } else {
@@ -236,9 +290,6 @@ const requireTier = (requiredTier) => {
   };
 };
 
-/**
- * Set db reference (called from main index.js)
- */
 const setDb = (database) => {
   db = database;
 };
@@ -246,5 +297,8 @@ const setDb = (database) => {
 module.exports = {
   authenticateUser,
   requireTier,
+  requireTeamRole,
+  hasTeamRole,
+  loadUserTeams,
   setDb
 };

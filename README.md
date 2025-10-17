@@ -78,6 +78,11 @@ console.log(`${status.timeRemaining}ms remaining`);
 - Team collaboration and sharing
 - Enterprise authentication (SSO)
 
+### 👥 Team Collaboration & Billing (Phase 4)
+- Organization endpoints with owner/admin/member roles enforced via Firestore rules
+- Invitation lifecycle APIs (`/teams/:teamId/invitations`) with token acceptance flow
+- Stripe-linked team billing metadata and checkout helpers for owners
+
 ## 🧱 Platform Foundations (Sprint 0)
 
 MINOOTS is evolving into the distributed horology platform described in `AGENTIC_TIMER_ARCHITECTURE.md`. This repository now

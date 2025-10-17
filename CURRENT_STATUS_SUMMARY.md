@@ -28,6 +28,19 @@
 - **Node.js SDK** - Complete SDK with examples and tests
 - **API Documentation** - Comprehensive docs and Postman collection
 
+### 🧰 Phase 3 Tooling Boost (2025-11-03)
+- Node SDK now ships resilient retry/backoff helpers with lifecycle hooks for instrumentation.
+- React (`sdk/react/useMinootsTimer.ts`) and Vue (`sdk/vue/useMinootsTimer.ts`) bindings unblock dashboard workstreams.
+- Python SDK adds LangChain `AtoTimerTool` and LlamaIndex helpers with optional dependencies for agent stacks.
+- Respx-backed pytest harness validates the async Python client offline, covering happy paths, API errors, and timeout handling.
+- GitHub Action (`.github/actions/minoots-timer`) and Slack `/ato` command reference integration accelerate ops automation.
+
+### 🛡️ Phase 4 Foundations Ignited
+- Firestore rules, Express middleware, and new `/teams` endpoints deliver working organization + RBAC scaffolding.
+- Timer APIs enforce team membership—anonymous access now restricted to personal timers only.
+- Team management utilities (`functions/utils/teamService.js`) centralize invites, role changes, and membership lists.
+- Invitation lifecycle endpoints + Stripe team billing linkage let owners issue tokens, accept invites, and attach subscription metadata to teams.
+
 ## 🎯 BUSINESS MODEL LOCKED IN
 
 ### Pricing Strategy:
@@ -76,25 +89,17 @@ curl https://api-m3waemr5lq-uc.a.run.app/pricing
 
 ## 🚧 WHAT NEEDS IMMEDIATE ATTENTION
 
-### 1. Stripe Configuration (30 minutes)
-```bash
-# Set environment variables
-firebase functions:config:set \
-  stripe.secret_key="sk_live_..." \
-  stripe.webhook_secret="whsec_..." \
-  stripe.price_pro_monthly="price_..." \
-  stripe.price_team_monthly="price_..."
-```
+### 1. Invitation Delivery UX (4 hours)
+- Trigger transactional emails with invite links and build acceptance screen that posts to `/teams/invitations/:token/accept`.
+- Surface pending invites within the dashboard using the new `/teams/:teamId/invitations` endpoint.
 
-### 2. User Registration Flow (2 hours)
-- Simple Firebase Auth signup form
-- Email verification
-- API key generation on first login
+### 2. Stripe Provisioning Hooks (3 hours)
+- Confirm team checkout sessions include `teamId` metadata in production and extend webhook handlers to fan out entitlement updates (seat counts, premium feature flags).
+- Add Firestore listeners/UI badges so owners can see billing status from the dashboard.
 
-### 3. Basic Web Dashboard (4 hours)
-- React app showing user's timers
-- API key management interface
-- Upgrade to Pro button
+### 3. Front-end Coverage & SDK QA (5 hours)
+- Add Jest/Vitest suites for the React/Vue hooks plus integration smoke tests for Slack & GitHub automation.
+- Expand Python pytest coverage to core client flows once httpx mocking harness lands.
 
 ## 🎯 LAUNCH READINESS CHECKLIST
 
