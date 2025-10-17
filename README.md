@@ -78,6 +78,19 @@ console.log(`${status.timeRemaining}ms remaining`);
 - Team collaboration and sharing
 - Enterprise authentication (SSO)
 
+### 👥 Team Collaboration & Billing (Phase 4)
+- Organization endpoints with owner/admin/member roles enforced via Firestore rules
+- Invitation lifecycle APIs (`/teams/:teamId/invitations`) with token acceptance flow
+- Shared timer endpoints (`/teams/:teamId/shared-timers`) with per-collaborator roles and audit-friendly logs
+- Usage analytics + admin dashboards powered by `/teams/:teamId/analytics/summary|history|active`
+- Stripe-linked billing console covering usage metering, invoices, payment methods, trials, and promotions
+- Enterprise SSO provider management with OIDC + SAML assertion handling
+
+### 🖥️ Phase 5 Interfaces (2025-11-05)
+- `apps/dashboard` – React + Tailwind control center with live timer streaming, analytics, team management, billing console, integration marketplace, ops hub, and creation wizard.
+- Offline-friendly dashboard mocks can be replaced by setting `VITE_MINOOTS_API_BASE` to point at the Firebase Functions or control plane endpoints.
+- `apps/mobile` – Expo React Native companion offering timer cards, analytics sparkline, and quick action shortcuts for operators on iOS/Android.
+
 ## 🧱 Platform Foundations (Sprint 0)
 
 MINOOTS is evolving into the distributed horology platform described in `AGENTIC_TIMER_ARCHITECTURE.md`. This repository now
@@ -192,10 +205,10 @@ MINOOTS.cleanup();
 ```javascript
 // Create dependent timers
 const timer1 = MINOOTS.create({ name: 'step1', duration: '1m' });
-const timer2 = MINOOTS.create({ 
-  name: 'step2', 
+const timer2 = MINOOTS.create({
+  name: 'step2',
   duration: '30s',
-  depends_on: timer1.id 
+  dependencies: [timer1.id]
 });
 ```
 
@@ -204,10 +217,14 @@ const timer2 = MINOOTS.create({
 MINOOTS.create({
   name: 'conditional_deploy',
   duration: '5m',
-  conditions: {
+  context: {
     environment: 'production',
-    tests_passed: true
-  }
+    testsPassed: true
+  },
+  conditions: [
+    { lhs: 'environment', operator: 'equals', rhs: 'production' },
+    { lhs: 'testsPassed', operator: 'equals', rhs: true }
+  ]
 });
 ```
 
@@ -216,7 +233,31 @@ MINOOTS.create({
 // Share timer with team
 MINOOTS.share('timer_id', {
   team: 'devops-team',
-  permissions: ['read', 'cancel']
+  collaborators: [{ userId: 'uid-123', role: 'editor' }]
+});
+```
+
+#### Templates & Schedules
+```javascript
+// Save a template for repeated workflows
+await minootsApi.post(`/teams/${teamId}/templates`, {
+  name: 'nightly-backup',
+  config: {
+    name: 'nightly-backup',
+    duration: '2h',
+    events: {
+      on_expire: {
+        webhook: 'https://ops.example.com/backup-complete'
+      }
+    }
+  }
+});
+
+// Run it every day at 02:00 UTC
+await minootsApi.post(`/teams/${teamId}/schedules`, {
+  name: 'nightly-backup',
+  templateId: templateId,
+  cron: '0 2 * * *'
 });
 ```
 
