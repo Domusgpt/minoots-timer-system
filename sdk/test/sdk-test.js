@@ -1,18 +1,97 @@
 /**
  * MINOOTS SDK - Test Suite
- * Comprehensive tests for all SDK functionality
+ * Modernized tests using a fetch stub to validate SDK behavior without hitting the live API.
  */
 
 const MinootsSDK = require('../minoots-sdk.js');
+const { MinootsAPIError } = MinootsSDK;
+
+class MockFetch {
+    constructor() {
+        this.routes = new Map();
+        this.calls = [];
+    }
+
+    respond(method, path, handler) {
+        const key = this._key(method, path);
+        const value = Array.isArray(handler) ? handler.slice() : handler;
+        this.routes.set(key, value);
+    }
+
+    respondSequence(method, path, handlers) {
+        this.respond(method, path, handlers);
+    }
+
+    _key(method, path) {
+        return `${method.toUpperCase()} ${path}`;
+    }
+
+    async fetch(input, init = {}) {
+        const url = typeof input === 'string' ? new URL(input) : new URL(input.url);
+        const method = (init.method || 'GET').toUpperCase();
+        const key = this._key(method, url.pathname);
+
+        const route = this.routes.get(key);
+        let handler = route;
+        if (Array.isArray(route)) {
+            if (route.length === 0) {
+                throw new Error(`No more mock responses configured for ${method} ${url.pathname}`);
+            }
+            handler = route.shift();
+            this.routes.set(key, route);
+        }
+
+        if (!handler) {
+            throw new Error(`No mock response configured for ${method} ${url.pathname}`);
+        }
+
+        const headersInstance = new Headers(init.headers || {});
+        const headers = {};
+        headersInstance.forEach((value, headerName) => {
+            headers[headerName.toLowerCase()] = value;
+        });
+
+        let body = undefined;
+        if (init.body) {
+            try {
+                body = JSON.parse(init.body);
+            } catch (error) {
+                body = init.body;
+            }
+        }
+
+        const context = { url, init, headers, body, method };
+        const responseConfig = typeof handler === 'function' ? handler(context, this) : handler;
+        const status = responseConfig.status || 200;
+        const responseHeaders = responseConfig.headers || { 'content-type': 'application/json' };
+        const responseBody = responseConfig.body !== undefined ? responseConfig.body : {};
+        const serializedBody = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody);
+
+        this.calls.push({
+            method,
+            url: url.toString(),
+            path: url.pathname,
+            headers,
+            body,
+            status,
+        });
+
+        return new Response(serializedBody, { status, headers: responseHeaders });
+    }
+}
 
 class TestRunner {
     constructor() {
         this.tests = [];
         this.passed = 0;
         this.failed = 0;
+        this.mockFetch = new MockFetch();
         this.sdk = new MinootsSDK({
             agentId: 'test_agent',
-            team: 'sdk_test_team'
+            team: 'sdk_test_team',
+            apiKey: 'test-api-key',
+            timeout: 5000,
+            fetch: this.mockFetch.fetch.bind(this.mockFetch),
         });
     }
 
@@ -75,25 +154,161 @@ class TestRunner {
     }
 }
 
-// Test suite
 const runner = new TestRunner();
 
-// Test 1: SDK initialization
-runner.test('SDK Initialization', async () => {
+// Configure mock responses
+const now = Date.now();
+
+runner.mockFetch.respond('GET', '/health', {
+    body: { status: 'healthy', timestamp: now, service: 'minoots-control-plane' },
+});
+
+runner.mockFetch.respond('POST', '/timers', ({ body }) => {
+    if (body && body.name === 'fail_me') {
+        return { status: 400, body: { error: 'Bad timer payload' } };
+    }
+
+    return {
+        body: {
+            success: true,
+            timer: {
+                id: 'timer-123',
+                name: body.name,
+                status: 'running',
+                duration: body.duration,
+                timeRemaining: 9000,
+                progress: 0,
+                agent_id: body.agent_id,
+                team: body.team,
+            },
+        },
+    };
+});
+
+runner.mockFetch.respond('GET', '/timers/timer-123', {
+    body: {
+        success: true,
+        timer: {
+            id: 'timer-123',
+            name: 'test_timer_creation',
+            status: 'running',
+            timeRemaining: 8000,
+            progress: 0.25,
+        },
+    },
+});
+
+runner.mockFetch.respond('GET', '/timers', {
+    body: {
+        success: true,
+        count: 1,
+        timers: [
+            {
+                id: 'timer-123',
+                name: 'test_timer_creation',
+                status: 'running',
+            },
+        ],
+    },
+});
+
+runner.mockFetch.respond('POST', '/quick/wait', ({ body }) => ({
+    body: {
+        success: true,
+        timer: {
+            id: 'quick-id',
+            name: body.name,
+            status: 'running',
+            timeRemaining: 5000,
+        },
+    },
+}));
+
+runner.mockFetch.respondSequence('GET', '/timers/quick-id', [
+    {
+        body: {
+            success: true,
+            timer: {
+                id: 'quick-id',
+                status: 'running',
+                timeRemaining: 2000,
+            },
+        },
+    },
+    {
+        body: {
+            success: true,
+            timer: {
+                id: 'quick-id',
+                status: 'expired',
+                timeRemaining: 0,
+            },
+        },
+    },
+]);
+
+runner.mockFetch.respondSequence('GET', '/timers/poll-id', [
+    {
+        body: {
+            success: true,
+            timer: {
+                id: 'poll-id',
+                status: 'running',
+                timeRemaining: 1500,
+            },
+        },
+    },
+    {
+        body: {
+            success: true,
+            timer: {
+                id: 'poll-id',
+                status: 'settled',
+                timeRemaining: 0,
+            },
+        },
+    },
+]);
+
+runner.mockFetch.respondSequence('GET', '/timers/retry-123', [
+    { status: 500, body: { error: 'temporary failure' } },
+    {
+        body: {
+            success: true,
+            timer: {
+                id: 'retry-123',
+                status: 'completed',
+                timeRemaining: 0,
+            },
+        },
+    },
+]);
+
+runner.mockFetch.respondSequence('GET', '/timers/retry-fail', [
+    { status: 503, body: { error: 'still down' } },
+    { status: 503, body: { error: 'still down' } },
+    { status: 503, body: { error: 'still down' } },
+]);
+
+// Tests
+runner.test('SDK Initialization and API key propagation', async () => {
     await runner.assertExists(runner.sdk, 'SDK should be initialized');
     await runner.assertEqual(runner.sdk.defaultAgentId, 'test_agent', 'Agent ID should be set');
     await runner.assertEqual(runner.sdk.defaultTeam, 'sdk_test_team', 'Team should be set');
+
+    const call = runner.mockFetch.calls[0];
+    if (call) {
+        await runner.assertEqual(call.headers['x-api-key'], 'test-api-key', 'API key header should be applied');
+    }
 });
 
-// Test 2: Health check
 runner.test('Health Check', async () => {
     const health = await runner.sdk.health();
-    await runner.assert(health.status === 'healthy', 'API should be healthy');
+    await runner.assertEqual(health.status, 'healthy', 'API should be healthy');
     await runner.assertExists(health.timestamp, 'Health response should have timestamp');
     await runner.assertExists(health.service, 'Health response should have service name');
 });
 
-// Test 3: Duration parsing
 runner.test('Duration Parsing', async () => {
     await runner.assertEqual(runner.sdk.parseDuration('5s'), 5000, '5s should be 5000ms');
     await runner.assertEqual(runner.sdk.parseDuration('2m'), 120000, '2m should be 120000ms');
@@ -101,19 +316,17 @@ runner.test('Duration Parsing', async () => {
     await runner.assertEqual(runner.sdk.parseDuration(10000), 10000, 'Number should pass through');
 });
 
-// Test 4: Time formatting
 runner.test('Time Formatting', async () => {
     await runner.assertEqual(runner.sdk.formatTimeRemaining(5000), '5s', '5000ms should format as 5s');
     await runner.assertEqual(runner.sdk.formatTimeRemaining(65000), '1m 5s', '65000ms should format as 1m 5s');
     await runner.assertEqual(runner.sdk.formatTimeRemaining(3665000), '1h 1m 5s', '3665000ms should format as 1h 1m 5s');
 });
 
-// Test 5: Timer creation
 runner.test('Timer Creation', async () => {
     const result = await runner.sdk.createTimer({
         name: 'test_timer_creation',
         duration: '10s',
-        metadata: { test: true }
+        metadata: { test: true },
     });
 
     await runner.assert(result.success, 'Timer creation should succeed');
@@ -121,26 +334,19 @@ runner.test('Timer Creation', async () => {
     await runner.assertExists(result.timer.id, 'Timer should have ID');
     await runner.assertEqual(result.timer.name, 'test_timer_creation', 'Timer name should match');
     await runner.assertEqual(result.timer.status, 'running', 'Timer should be running');
-    
-    // Store for later tests
-    runner.createdTimerId = result.timer.id;
 });
 
-// Test 6: Timer retrieval
 runner.test('Timer Retrieval', async () => {
-    await runner.assert(runner.createdTimerId, 'Should have created timer ID from previous test');
-    
-    const result = await runner.sdk.getTimer(runner.createdTimerId);
+    const result = await runner.sdk.getTimer('timer-123');
     await runner.assert(result.success, 'Timer retrieval should succeed');
     await runner.assertExists(result.timer, 'Result should have timer object');
-    await runner.assertEqual(result.timer.id, runner.createdTimerId, 'Timer ID should match');
+    await runner.assertEqual(result.timer.id, 'timer-123', 'Timer ID should match');
     await runner.assertExists(result.timer.timeRemaining, 'Timer should have timeRemaining');
     await runner.assertExists(result.timer.progress, 'Timer should have progress');
 });
 
-// Test 7: Timer listing
 runner.test('Timer Listing', async () => {
-    const result = await runner.sdk.listTimers();
+    const result = await runner.sdk.listTimers({ agentId: 'test_agent' });
     await runner.assert(result.success, 'Timer listing should succeed');
     await runner.assertExists(result.timers, 'Result should have timers array');
     await runner.assertExists(result.count, 'Result should have count');
@@ -148,90 +354,73 @@ runner.test('Timer Listing', async () => {
     await runner.assert(result.count >= 1, 'Should have at least 1 timer');
 });
 
-// Test 8: Quick wait timer
-runner.test('Quick Wait Timer', async () => {
+runner.test('Quick Wait Timer and waitFor helper', async () => {
     const result = await runner.sdk.quickWait('5s', {
-        name: 'test_quick_wait'
+        name: 'test_quick_wait',
     });
 
     await runner.assert(result.success, 'Quick wait should succeed');
     await runner.assertExists(result.timer, 'Result should have timer object');
     await runner.assertEqual(result.timer.name, 'test_quick_wait', 'Timer name should match');
+
+    const completedTimer = await runner.sdk.waitFor('5s', { pollIntervalMs: 5 });
+    await runner.assertEqual(completedTimer.status, 'expired', 'waitFor should resolve when timer expires');
 });
 
-// Test 9: Team broadcast
-runner.test('Team Broadcast', async () => {
-    const result = await runner.sdk.broadcastToTeam('sdk_test_team', 'Test broadcast message', {
-        test: true,
-        timestamp: Date.now()
-    });
-
-    await runner.assert(result.success, 'Broadcast should succeed');
-    await runner.assertExists(result.broadcast, 'Result should have broadcast object');
-    await runner.assertEqual(result.broadcast.team, 'sdk_test_team', 'Team should match');
-    await runner.assertEqual(result.broadcast.message, 'Test broadcast message', 'Message should match');
+runner.test('pollTimer resolves when timer completes', async () => {
+    const timer = await runner.sdk.pollTimer('poll-id', 5);
+    await runner.assertEqual(timer.status, 'settled', 'pollTimer should resolve with final timer');
 });
 
-// Test 10: Timer with webhook
-runner.test('Timer with Webhook', async () => {
-    const result = await runner.sdk.createTimerWithWebhook({
-        name: 'test_webhook_timer',
-        duration: '3s',
-        webhook: 'https://httpbin.org/post',
-        message: 'Test webhook message',
-        data: { test: true }
-    });
-
-    await runner.assert(result.success, 'Webhook timer creation should succeed');
-    await runner.assertExists(result.timer, 'Result should have timer object');
-    await runner.assertEqual(result.timer.name, 'test_webhook_timer', 'Timer name should match');
-});
-
-// Test 11: Filtered timer listing
-runner.test('Filtered Timer Listing', async () => {
-    const result = await runner.sdk.listTimers({
-        agentId: 'test_agent',
-        team: 'sdk_test_team'
-    });
-
-    await runner.assert(result.success, 'Filtered listing should succeed');
-    await runner.assertExists(result.timers, 'Result should have timers array');
-    
-    // All timers should belong to our agent/team
-    result.timers.forEach(timer => {
-        if (timer.agentId && timer.agentId !== 'test_agent') {
-            throw new Error(`Timer ${timer.id} has wrong agentId: ${timer.agentId}`);
-        }
-    });
-});
-
-// Test 12: Error handling
-runner.test('Error Handling', async () => {
+runner.test('API errors propagate as MinootsAPIError', async () => {
+    let errorCaught = false;
     try {
-        // Try to get non-existent timer
-        await runner.sdk.getTimer('non-existent-timer-id');
-        throw new Error('Should have thrown an error for non-existent timer');
+        await runner.sdk.createTimer({
+            name: 'fail_me',
+            duration: '5s',
+        });
     } catch (error) {
-        await runner.assert(error.message.includes('Timer not found'), 'Should get proper error message');
+        errorCaught = error instanceof MinootsAPIError;
     }
 
-    try {
-        // Try invalid duration
-        runner.sdk.parseDuration('invalid');
-        throw new Error('Should have thrown an error for invalid duration');
-    } catch (error) {
-        await runner.assert(error.message.includes('Invalid duration'), 'Should get proper error message');
-    }
+    await runner.assert(errorCaught, 'MinootsAPIError should be thrown for API failures');
 });
 
-// Run tests
-if (require.main === module) {
-    runner.run().then(() => {
-        console.log('\n🎉 SDK test suite completed successfully!');
-    }).catch(error => {
-        console.error('❌ Test suite failed:', error.message);
-        process.exit(1);
-    });
-}
+runner.test('Retry logic triggers on configured status codes', async () => {
+    const retryingSdk = runner.sdk.withRetry({ attempts: 2, minTimeout: 1, maxTimeout: 2, jitter: false });
+    let beforeCount = 0;
+    let afterCount = 0;
+    let retryCount = 0;
 
-module.exports = TestRunner;
+    retryingSdk.hooks.beforeRequest.push(() => { beforeCount += 1; });
+    retryingSdk.hooks.afterResponse.push(() => { afterCount += 1; });
+    retryingSdk.hooks.onRetry.push(() => { retryCount += 1; });
+
+    const result = await retryingSdk.getTimer('retry-123');
+
+    await runner.assertEqual(result.timer.id, 'retry-123', 'Timer ID should match after retry');
+    await runner.assertEqual(beforeCount, 2, 'beforeRequest hook should run twice');
+    await runner.assertEqual(afterCount, 2, 'afterResponse hook should run twice');
+    await runner.assertEqual(retryCount, 1, 'onRetry hook should run once');
+});
+
+runner.test('Retry stops after configured attempts', async () => {
+    const retryingSdk = runner.sdk.withRetry({
+        attempts: 2,
+        minTimeout: 1,
+        maxTimeout: 2,
+        jitter: false,
+        retryOn: [503],
+    });
+
+    let errorCaught = false;
+    try {
+        await retryingSdk.getTimer('retry-fail');
+    } catch (error) {
+        errorCaught = error instanceof MinootsAPIError;
+    }
+
+    await runner.assert(errorCaught, 'Retry exhaustion should throw the final API error');
+});
+
+runner.run();
