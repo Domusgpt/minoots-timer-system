@@ -57,6 +57,33 @@ export const agentBindingSchema = z
   })
   .optional();
 
+const temporalGraphNodeSchema = z.object({
+  id: z.string().min(1),
+  after: z.array(z.string().min(1)).default([]),
+  offset: z.union([z.string().min(1), z.number().int().nonnegative()]).optional(),
+  offsetMs: z.number().int().nonnegative().optional(),
+  duration: z.union([z.string().min(1), z.number().int().positive()]).optional(),
+  durationMs: z.number().int().positive().optional(),
+  metadata: z.record(z.any()).optional(),
+  labels: z.record(z.string()).optional(),
+  actionBundle: timerActionBundleSchema.optional(),
+  agentBinding: agentBindingSchema,
+});
+
+const temporalGraphSchema = z
+  .object({
+    root: z.string().min(1).default('root'),
+    nodes: z.array(temporalGraphNodeSchema).min(1),
+  })
+  .optional();
+
+const jitterCompensationSchema = z
+  .object({
+    maxCompensationMs: z.number().int().nonnegative().default(0),
+    smoothingFactor: z.number().positive().max(1).default(0.2),
+  })
+  .optional();
+
 export const timerCreateSchema = z
   .object({
     tenantId: z.string().min(1),
@@ -68,6 +95,8 @@ export const timerCreateSchema = z
     labels: z.record(z.string()).optional(),
     actionBundle: timerActionBundleSchema.optional(),
     agentBinding: agentBindingSchema,
+    temporalGraph: temporalGraphSchema,
+    jitterPolicy: jitterCompensationSchema,
   })
   .refine(
     (value) => Boolean(value.duration ?? value.fireAt),
@@ -85,8 +114,32 @@ export type TimerCancelInput = z.infer<typeof timerCancelSchema>;
 export type TimerAction = z.infer<typeof timerActionSchema>;
 export type TimerActionBundle = z.infer<typeof timerActionBundleSchema>;
 export type AgentBinding = z.infer<typeof agentBindingSchema>;
+export type TimerGraphNodeInput = z.infer<typeof temporalGraphNodeSchema>;
+export type TimerGraphInput = z.infer<typeof temporalGraphSchema>;
+export type JitterPolicyInput = z.infer<typeof jitterCompensationSchema>;
 
 export type TimerStatus = 'scheduled' | 'armed' | 'fired' | 'cancelled' | 'failed' | 'settled';
+
+export interface TemporalGraphNode {
+  id: string;
+  after: string[];
+  offsetMs: number;
+  durationMs: number;
+  metadata?: Record<string, unknown>;
+  labels?: Record<string, string>;
+  actionBundle?: TimerActionBundle;
+  agentBinding?: AgentBinding;
+}
+
+export interface TimerGraphDefinition {
+  root: string;
+  nodes: TemporalGraphNode[];
+}
+
+export interface JitterPolicy {
+  maxCompensationMs: number;
+  smoothingFactor: number;
+}
 
 export interface TimerRecord {
   id: string;
@@ -108,4 +161,28 @@ export interface TimerRecord {
   settledAt?: string;
   failureReason?: string;
   stateVersion?: number;
+  temporalGraph?: TimerGraphDefinition;
+  graphRootId?: string;
+  graphNodeId?: string;
+  jitterPolicy?: JitterPolicy;
+}
+
+export type TimerEvent =
+  | { type: 'scheduled'; data: TimerRecord }
+  | { type: 'fired'; data: TimerRecord }
+  | { type: 'cancelled'; data: { timer: TimerRecord; reason?: string } }
+  | { type: 'settled'; data: TimerRecord };
+
+export type TimerEventType = TimerEvent['type'];
+
+export interface TimerEventEnvelope {
+  envelopeId: string;
+  tenantId: string;
+  occurredAtIso: string;
+  dedupeKey: string;
+  traceId?: string;
+  signature: string;
+  signatureVersion: string;
+  eventType: TimerEventType;
+  event: TimerEvent;
 }

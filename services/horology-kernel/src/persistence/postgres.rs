@@ -28,11 +28,15 @@ impl PostgresTimerStore {
             .await
             .with_context(|| "failed to connect to postgres for timer store")?;
         info!("connected to postgres for timer store");
-        Ok(Self { pool })
+        Ok(Self::from_pool(pool))
     }
 
     pub fn pool(&self) -> Pool<Postgres> {
         self.pool.clone()
+    }
+
+    pub fn from_pool(pool: Pool<Postgres>) -> Self {
+        Self { pool }
     }
 }
 
@@ -74,6 +78,18 @@ impl TimerStore for PostgresTimerStore {
                 settled_at: row.try_get("settled_at")?,
                 failure_reason: row.try_get("failure_reason")?,
                 state_version: row.try_get::<i64, _>("state_version")?,
+                graph_root_id: row.try_get("graph_root_id")?,
+                graph_node_id: row.try_get("graph_node_id")?,
+                temporal_graph: row
+                    .try_get::<Option<serde_json::Value>, _>("temporal_graph")?
+                    .map(|value| serde_json::from_value(value))
+                    .transpose()?
+                    .flatten(),
+                jitter_policy: row
+                    .try_get::<Option<serde_json::Value>, _>("jitter_policy")?
+                    .map(|value| serde_json::from_value(value))
+                    .transpose()?
+                    .flatten(),
             };
             timers.push(timer);
         }
@@ -86,11 +102,11 @@ impl TimerStore for PostgresTimerStore {
             INSERT INTO timer_records (
                 tenant_id, id, requested_by, name, duration_ms, created_at, fire_at, status,
                 metadata, labels, action_bundle, agent_binding, fired_at, cancelled_at, cancel_reason, cancelled_by,
-                settled_at, failure_reason, state_version
+                settled_at, failure_reason, state_version, graph_root_id, graph_node_id, temporal_graph, jitter_policy
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
                 $9, $10, $11, $12, $13, $14, $15, $16,
-                $17, $18, $19
+                $17, $18, $19, $20, $21, $22, $23
             )
             ON CONFLICT (tenant_id, id) DO UPDATE SET
                 requested_by = EXCLUDED.requested_by,
@@ -109,7 +125,11 @@ impl TimerStore for PostgresTimerStore {
                 cancelled_by = EXCLUDED.cancelled_by,
                 settled_at = EXCLUDED.settled_at,
                 failure_reason = EXCLUDED.failure_reason,
-                state_version = EXCLUDED.state_version
+                state_version = EXCLUDED.state_version,
+                graph_root_id = EXCLUDED.graph_root_id,
+                graph_node_id = EXCLUDED.graph_node_id,
+                temporal_graph = EXCLUDED.temporal_graph,
+                jitter_policy = EXCLUDED.jitter_policy
             "#,
         )
         .bind(&timer.tenant_id)
@@ -131,6 +151,18 @@ impl TimerStore for PostgresTimerStore {
         .bind(timer.settled_at)
         .bind(timer.failure_reason.clone())
         .bind(timer.state_version)
+        .bind(timer.graph_root_id)
+        .bind(timer.graph_node_id.clone())
+        .bind(timer
+            .temporal_graph
+            .clone()
+            .map(serde_json::to_value)
+            .transpose()?)
+        .bind(timer
+            .jitter_policy
+            .clone()
+            .map(serde_json::to_value)
+            .transpose()?)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -230,6 +262,10 @@ mod tests {
             settled_at: None,
             failure_reason: None,
             state_version: 0,
+            graph_root_id: None,
+            graph_node_id: None,
+            temporal_graph: None,
+            jitter_policy: None,
         };
 
         command_log

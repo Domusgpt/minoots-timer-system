@@ -29,6 +29,10 @@ const toResponse = (timer: TimerRecord) => ({
   cancelledBy: timer.cancelledBy,
   settledAt: timer.settledAt,
   failureReason: timer.failureReason,
+  temporalGraph: timer.temporalGraph,
+  graphRootId: timer.graphRootId,
+  graphNodeId: timer.graphNodeId,
+  jitterPolicy: timer.jitterPolicy,
 });
 
 const tenantFromQuery = (req: AuthenticatedRequest): string => {
@@ -53,6 +57,21 @@ const tenantFromHeader = (req: AuthenticatedRequest): string => {
     throw new Error('Tenant mismatch with authenticated principal');
   }
   return resolved;
+};
+
+const topicsFromRequest = (req: AuthenticatedRequest): string[] => {
+  const topics = req.query.topic ?? req.query.topics;
+  if (!topics) {
+    return [];
+  }
+  if (Array.isArray(topics)) {
+    return topics.map((value) => value.toString()).filter((value) => value.length > 0);
+  }
+  return topics
+    .toString()
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
 };
 
 const handleError = (err: unknown, res: Response) => {
@@ -87,6 +106,52 @@ export const registerTimerRoutes = (
   const router = express.Router();
 
   router.use(authMiddleware(authenticator));
+
+  router.get('/stream', requireRole('timer.read'), (req: AuthenticatedRequest, res) => {
+    try {
+      const context = req.authContext!;
+      const tenantId = tenantFromQuery(req);
+      if (tenantId !== context.tenantId) {
+        res.status(403).json({ message: 'Authenticated principal cannot access requested tenant' });
+        return;
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      const flushable = res as Response & { flushHeaders?: () => void };
+      flushable.flushHeaders?.();
+
+      const keepAlive = setInterval(() => {
+        res.write(': keep-alive\n\n');
+      }, 15000);
+
+      const subscription = timerService.subscribeEvents(
+        context,
+        { tenantId, topics: topicsFromRequest(req) },
+        {
+          onEvent: (envelope) => {
+            res.write(`event: ${envelope.eventType}\n`);
+            res.write(`data: ${JSON.stringify(envelope)}\n\n`);
+          },
+          onError: (error) => {
+            res.write('event: error\n');
+            res.write(`data: ${JSON.stringify({ message: error.message })}\n\n`);
+          },
+          onClose: () => {
+            res.end();
+          },
+        },
+      );
+
+      req.on('close', () => {
+        clearInterval(keepAlive);
+        subscription.close();
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
 
   router.post('/', requireRole('timer.write'), async (req: AuthenticatedRequest, res) => {
     try {

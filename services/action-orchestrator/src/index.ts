@@ -1,11 +1,12 @@
 import { createEventSource } from './infra/eventSource';
 import { executeActions } from './actions';
 import { logger } from './logger';
-import { TimerEvent } from './types';
+import { TimerEventEnvelope } from './types';
 import { validateActionBundle } from './schema/registry';
 import { actionAttempts, startMetricsServer } from './metrics';
 
-const handleEvent = async (event: TimerEvent): Promise<void> => {
+const handleEvent = async (envelope: TimerEventEnvelope): Promise<void> => {
+  const event = envelope.event;
   switch (event.type) {
     case 'scheduled':
       logger.debug({ timerId: event.data.id }, 'Timer scheduled');

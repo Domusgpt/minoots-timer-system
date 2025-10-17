@@ -203,6 +203,76 @@ class MinootsSDK {
             poll();
         });
     }
+
+    async streamTimerEvents(tenantId, options = {}) {
+        const topics = Array.isArray(options.topics) ? options.topics : [];
+        const params = new URLSearchParams({ tenantId });
+        topics.forEach((topic) => params.append('topic', topic));
+
+        const controller = new AbortController();
+        if (options.signal) {
+            options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+        }
+
+        const response = await fetch(`${this.baseURL}/timers/stream?${params.toString()}`, {
+            headers: { Accept: 'text/event-stream' },
+            signal: controller.signal,
+        });
+
+        if (!response.body) {
+            throw new Error('SSE not supported in this environment');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const processBuffer = () => {
+            let boundary;
+            while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+                const chunk = buffer.slice(0, boundary);
+                buffer = buffer.slice(boundary + 2);
+                const lines = chunk.split('\n');
+                let eventType = 'message';
+                let data = '';
+                for (const line of lines) {
+                    if (line.startsWith('event:')) {
+                        eventType = line.slice(6).trim();
+                    }
+                    if (line.startsWith('data:')) {
+                        data += line.slice(5).trim();
+                    }
+                }
+                if (data) {
+                    try {
+                        const payload = JSON.parse(data);
+                        options.onEvent?.({ eventType, payload });
+                    } catch (error) {
+                        console.warn('Failed to parse SSE payload', error);
+                    }
+                }
+            }
+        };
+
+        (async () => {
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+                    buffer += decoder.decode(value, { stream: true });
+                    processBuffer();
+                }
+            } catch (error) {
+                if (!controller.signal.aborted) {
+                    console.error('Timer event stream failed', error);
+                }
+            }
+        })();
+
+        return () => controller.abort();
+    }
 }
 
 // Export for CommonJS and ES modules
