@@ -61,6 +61,7 @@ async fn elects_and_fails_over_between_supervisors() {
         election_timeout_min_ms: 150,
         election_timeout_max_ms: 300,
         heartbeat_interval_ms: 60,
+        storage_pool: None,
     };
 
     let settings_b = RaftClusterSettings {
@@ -70,6 +71,7 @@ async fn elects_and_fails_over_between_supervisors() {
         election_timeout_min_ms: 150,
         election_timeout_max_ms: 300,
         heartbeat_interval_ms: 60,
+        storage_pool: None,
     };
 
     let settings_c = RaftClusterSettings {
@@ -79,6 +81,7 @@ async fn elects_and_fails_over_between_supervisors() {
         election_timeout_min_ms: 150,
         election_timeout_max_ms: 300,
         heartbeat_interval_ms: 60,
+        storage_pool: None,
     };
 
     let (supervisor_a, leader_a) = RaftSupervisor::start(settings_a)
