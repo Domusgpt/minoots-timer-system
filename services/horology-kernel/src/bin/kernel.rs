@@ -1,3 +1,4 @@
+use horology_kernel::events::jetstream::{spawn_forwarder, JetStreamForwarderConfig};
 use horology_kernel::grpc::HorologyKernelService;
 use horology_kernel::leadership::LeaderHandle;
 use horology_kernel::pb::horology_kernel_server::HorologyKernelServer;
@@ -5,7 +6,9 @@ use horology_kernel::persistence::postgres::{PostgresCommandLog, PostgresTimerSt
 use horology_kernel::replication::{
     PostgresRaftCoordinator, PostgresRaftSettings, RaftClusterSettings, RaftSupervisor,
 };
-use horology_kernel::{HorologyKernel, KernelRuntimeOptions, SchedulerConfig, TimerSpec};
+use horology_kernel::{
+    EventSigner, HorologyKernel, KernelRuntimeOptions, SchedulerConfig, TimerSpec,
+};
 use openraft::BasicNode;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::signal;
@@ -19,7 +22,20 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting horology kernel");
 
     let (kernel, raft_supervisor, raft_coordinator) = build_kernel().await?;
-    let mut events = kernel.subscribe();
+    let mut logging_receiver = kernel.subscribe();
+    let jetstream_task = match jetstream_forwarder_config_from_env() {
+        Some(config) => match spawn_forwarder(config, kernel.subscribe()).await {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                warn!(
+                    ?error,
+                    "Failed to start JetStream forwarder; continuing without NATS publishing"
+                );
+                None
+            }
+        },
+        None => None,
+    };
     let grpc_addr: SocketAddr = std::env::var("KERNEL_GRPC_ADDR")
         .or_else(|_| std::env::var("KERNEL_GRPC_URL"))
         .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
@@ -46,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
     let event_task = tokio::spawn(async move {
         loop {
-            match events.recv().await {
+            match logging_receiver.recv().await {
                 Ok(event) => info!(?event, "timer event"),
                 Err(err) => {
                     tracing::warn!(?err, "event channel closed");
@@ -72,6 +88,9 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Shutting down horology kernel");
     event_task.abort();
+    if let Some(handle) = jetstream_task {
+        handle.abort();
+    }
     if let Some(supervisor) = raft_supervisor {
         supervisor.shutdown().await.ok();
     }
@@ -129,6 +148,7 @@ async fn build_kernel() -> anyhow::Result<(
                     election_timeout_min_ms: election_min,
                     election_timeout_max_ms: election_max,
                     heartbeat_interval_ms: heartbeat,
+                    storage_pool: Some(pool.clone()),
                 })
                 .await
                 {
@@ -145,10 +165,25 @@ async fn build_kernel() -> anyhow::Result<(
                 (None, Some(coordinator), Some(handle))
             };
 
+            let event_signer = match std::env::var("EVENT_ENVELOPE_SECRET")
+                .or_else(|_| std::env::var("KERNEL_ENVELOPE_SECRET"))
+            {
+                Ok(secret) if !secret.trim().is_empty() => {
+                    Arc::new(EventSigner::new(secret.as_bytes()))
+                }
+                _ => {
+                    warn!(
+                        "EVENT_ENVELOPE_SECRET not configured; using insecure development secret"
+                    );
+                    Arc::new(EventSigner::insecure_dev())
+                }
+            };
+
             let options = KernelRuntimeOptions {
                 store: shared_store,
                 command_log: Some(command_log),
                 leader: leader_handle,
+                event_signer,
             };
             let kernel = HorologyKernel::with_runtime(config, options).await?;
             tracing::info!(
@@ -194,6 +229,29 @@ async fn start_postgres_coordinator(
         "started postgres raft coordinator"
     );
     Ok((coordinator, handle))
+}
+
+fn jetstream_forwarder_config_from_env() -> Option<JetStreamForwarderConfig> {
+    let servers = std::env::var("NATS_JETSTREAM_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("NATS_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })?;
+    let subject = std::env::var("NATS_SUBJECT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "minoots.timer.fired".to_string());
+    let stream = std::env::var("NATS_JETSTREAM_STREAM")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    Some(JetStreamForwarderConfig {
+        servers,
+        subject,
+        stream,
+    })
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {

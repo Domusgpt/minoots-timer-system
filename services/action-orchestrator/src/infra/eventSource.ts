@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 import readline from 'node:readline';
 
@@ -19,7 +20,7 @@ import {
 import { z } from 'zod';
 
 import { logger } from '../logger';
-import { TimerEvent, TimerInstance } from '../types';
+import { TimerEvent, TimerEventEnvelope, TimerInstance } from '../types';
 import { DeadLetterQueue } from './deadLetterQueue';
 
 const timerInstanceSchema = z.object({
@@ -61,6 +62,7 @@ const timerInstanceSchema = z.object({
   settledAt: z.string().optional(),
   failureReason: z.string().optional(),
   stateVersion: z.number().optional(),
+  jitterMs: z.number().optional(),
 });
 
 const timerEventSchema: z.ZodType<TimerEvent> = z.union([
@@ -82,7 +84,99 @@ const timerEventSchema: z.ZodType<TimerEvent> = z.union([
   }) as z.ZodType<TimerEvent>,
 ]);
 
-type EventHandler = (event: TimerEvent) => Promise<void>;
+const envelopeSchema: z.ZodType<TimerEventEnvelope> = z
+  .object({
+    envelopeId: z.string(),
+    tenantId: z.string(),
+    occurredAtIso: z.string(),
+    dedupeKey: z.string(),
+    traceId: z.string().optional(),
+    signature: z.string(),
+    signatureVersion: z.string(),
+    eventType: z.enum(['scheduled', 'fired', 'cancelled', 'settled']),
+    event: timerEventSchema,
+  })
+  .refine((value) => value.event.type === value.eventType, {
+    message: 'eventType must match event.type',
+    path: ['eventType'],
+  });
+
+const DEFAULT_ENVELOPE_SECRET = 'insecure-dev-envelope-secret';
+let cachedEnvelopeSecret: string | null = null;
+
+const getEnvelopeSecret = (): string => {
+  if (cachedEnvelopeSecret) {
+    return cachedEnvelopeSecret;
+  }
+  const secret = process.env.EVENT_ENVELOPE_SECRET ?? process.env.KERNEL_ENVELOPE_SECRET;
+  if (secret && secret.trim().length > 0) {
+    cachedEnvelopeSecret = secret;
+    return cachedEnvelopeSecret;
+  }
+  logger.warn(
+    'EVENT_ENVELOPE_SECRET not configured; falling back to insecure development secret',
+  );
+  cachedEnvelopeSecret = DEFAULT_ENVELOPE_SECRET;
+  return cachedEnvelopeSecret;
+};
+
+const canonicalize = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === 'object' && value.constructor === Object) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .map(([key, nested]) => [key, canonicalize(nested)] as const)
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
+  }
+  return value;
+};
+
+const computeEnvelopeSignature = (envelope: TimerEventEnvelope, secret: string): string => {
+  const payload = canonicalize({
+    envelopeId: envelope.envelopeId,
+    tenantId: envelope.tenantId,
+    occurredAtIso: envelope.occurredAtIso,
+    dedupeKey: envelope.dedupeKey,
+    traceId: envelope.traceId ?? null,
+    eventType: envelope.eventType,
+    event: envelope.event,
+  });
+  const serialized = JSON.stringify(payload);
+  return crypto.createHmac('sha256', secret).update(serialized).digest('hex');
+};
+
+const verifyEnvelopeSignature = (
+  envelope: TimerEventEnvelope,
+  secret: string,
+): boolean => {
+  if (envelope.signatureVersion && envelope.signatureVersion !== 'v1-hmac-sha256') {
+    logger.error(
+      { signatureVersion: envelope.signatureVersion, envelopeId: envelope.envelopeId },
+      'Unsupported event envelope signature version',
+    );
+    return false;
+  }
+  try {
+    const expected = computeEnvelopeSignature(envelope, secret);
+    return expected.length === envelope.signature.length &&
+      crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(envelope.signature, 'hex'));
+  } catch (error) {
+    logger.error({ error, envelopeId: envelope.envelopeId }, 'Failed to verify envelope signature');
+    return false;
+  }
+};
+
+const optionalString = (value: unknown): string | undefined => {
+  if (typeof value === 'string' && value.length > 0) {
+    return value;
+  }
+  return undefined;
+};
+
+type EventHandler = (event: TimerEventEnvelope) => Promise<void>;
 
 type GrpcKernelClient = grpc.Client & {
   streamTimerEvents: (request: any) => grpc.ClientReadableStream<any>;
@@ -148,11 +242,19 @@ export class GrpcEventSource implements EventSource {
 
     this.stream.on('data', (message) => {
       try {
-        const event = convertGrpcEvent(message);
-        if (!event) {
+        const envelope = convertGrpcEnvelope(message);
+        if (!envelope) {
           return;
         }
-        handler(event).catch((error) => {
+        const secret = getEnvelopeSecret();
+        if (!verifyEnvelopeSignature(envelope, secret)) {
+          logger.error(
+            { envelopeId: envelope.envelopeId },
+            'Discarding gRPC event with invalid signature',
+          );
+          return;
+        }
+        handler(envelope).catch((error) => {
           logger.error({ error }, 'Timer handler failed for gRPC event');
         });
       } catch (error) {
@@ -196,7 +298,15 @@ export class NatsEventSource implements EventSource {
       for await (const message of this.subscription!) {
         try {
           const decoded = codec.decode(message.data);
-          const parsed = timerEventSchema.parse(JSON.parse(decoded));
+          const parsed = envelopeSchema.parse(JSON.parse(decoded));
+          const secret = getEnvelopeSecret();
+          if (!verifyEnvelopeSignature(parsed, secret)) {
+            logger.error(
+              { envelopeId: parsed.envelopeId },
+              'Discarding NATS event with invalid signature',
+            );
+            continue;
+          }
           await handler(parsed);
         } catch (error) {
           logger.error({ error }, 'Failed to process NATS timer event');
@@ -219,7 +329,15 @@ export class StdInEventSource implements EventSource {
     logger.info('Reading timer events from STDIN (JSON per line)');
     this.rl.on('line', async (line) => {
       try {
-        const parsed = timerEventSchema.parse(JSON.parse(line));
+        const parsed = envelopeSchema.parse(JSON.parse(line));
+        const secret = getEnvelopeSecret();
+        if (!verifyEnvelopeSignature(parsed, secret)) {
+          logger.error(
+            { envelopeId: parsed.envelopeId },
+            'Discarding STDIN event with invalid signature',
+          );
+          return;
+        }
         await handler(parsed);
       } catch (error) {
         logger.error({ error, line }, 'Failed to process STDIN timer event');
@@ -296,10 +414,20 @@ export class JetStreamEventSource implements EventSource {
 
     (async () => {
       for await (const message of this.subscription!) {
-        let parsed: TimerEvent | null = null;
+        let parsed: TimerEventEnvelope | null = null;
         try {
           const decoded = codec.decode(message.data);
-          parsed = timerEventSchema.parse(JSON.parse(decoded));
+          parsed = envelopeSchema.parse(JSON.parse(decoded));
+          const secret = getEnvelopeSecret();
+          if (!verifyEnvelopeSignature(parsed, secret)) {
+            logger.error(
+              { envelopeId: parsed.envelopeId },
+              'Discarding JetStream event with invalid signature',
+            );
+            await this.deadLetter?.publish(parsed, new Error('invalid envelope signature'));
+            message.ack();
+            continue;
+          }
         } catch (error) {
           logger.error({ error }, 'Failed to process JetStream timer event payload');
           await this.deadLetter?.publish(null, error);
@@ -358,7 +486,42 @@ export const createEventSource = async (): Promise<EventSource> => {
   return new StdInEventSource();
 };
 
-const convertGrpcEvent = (message: any): TimerEvent | null => {
+const convertGrpcEnvelope = (message: any): TimerEventEnvelope | null => {
+  if (!message || typeof message !== 'object') {
+    return null;
+  }
+  if (
+    typeof message.envelopeId !== 'string' ||
+    typeof message.tenantId !== 'string' ||
+    typeof message.occurredAtIso !== 'string' ||
+    typeof message.dedupeKey !== 'string' ||
+    typeof message.signature !== 'string'
+  ) {
+    return null;
+  }
+  const payload = convertGrpcEventPayload(message);
+  if (!payload) {
+    return null;
+  }
+  const eventType = (typeof message.eventType === 'string'
+    ? message.eventType
+    : payload.type) as TimerEventEnvelope['eventType'];
+  return {
+    envelopeId: message.envelopeId,
+    tenantId: message.tenantId,
+    occurredAtIso: message.occurredAtIso,
+    dedupeKey: message.dedupeKey,
+    traceId: optionalString(message.traceId),
+    signature: message.signature,
+    signatureVersion: typeof message.signatureVersion === 'string'
+      ? message.signatureVersion
+      : 'v1-hmac-sha256',
+    eventType,
+    event: payload,
+  };
+};
+
+const convertGrpcEventPayload = (message: any): TimerEvent | null => {
   if (!message) {
     return null;
   }

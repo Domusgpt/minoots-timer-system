@@ -108,4 +108,5 @@ export interface TimerRecord {
   settledAt?: string;
   failureReason?: string;
   stateVersion?: number;
+  jitterMs?: number;
 }

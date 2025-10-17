@@ -203,6 +203,102 @@ class MinootsSDK {
             poll();
         });
     }
+
+    async streamTimers(options = {}) {
+        const params = new URLSearchParams();
+        if (options.tenantId) {
+            params.set('tenantId', options.tenantId);
+        }
+
+        const url = `${this.baseURL}/timers/stream${params.toString() ? `?${params}` : ''}`;
+        const controller = new AbortController();
+        const signal = options.signal ?? controller.signal;
+        const response = await fetch(url, {
+            headers: { Accept: 'text/event-stream' },
+            signal,
+        });
+
+        if (!response.ok || !response.body) {
+            throw new Error(`Failed to open timer stream: ${response.status} ${response.statusText}`);
+        }
+
+        const handlers = [];
+        if (typeof options.onEvent === 'function') {
+            handlers.push(options.onEvent);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        const invokeHandlers = (event) => {
+            handlers.forEach((handler) => {
+                try {
+                    handler(event);
+                } catch (error) {
+                    console.error('Timer stream handler failed', error);
+                }
+            });
+        };
+
+        const parseEventChunk = (chunk) => {
+            const lines = chunk.split(/\r?\n/);
+            let eventType = 'message';
+            let dataLines = [];
+            for (const line of lines) {
+                if (line.startsWith('event:')) {
+                    eventType = line.slice(6).trim();
+                } else if (line.startsWith('data:')) {
+                    dataLines.push(line.slice(5).trim());
+                }
+            }
+            if (dataLines.length === 0) {
+                return null;
+            }
+            const payload = dataLines.join('\n');
+            try {
+                return { type: eventType, data: JSON.parse(payload) };
+            } catch (error) {
+                return { type: eventType, data: payload };
+            }
+        };
+
+        (async () => {
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+                    buffer += decoder.decode(value, { stream: true });
+                    let boundary = buffer.indexOf('\n\n');
+                    while (boundary !== -1) {
+                        const chunk = buffer.slice(0, boundary);
+                        buffer = buffer.slice(boundary + 2);
+                        const event = parseEventChunk(chunk);
+                        if (event) {
+                            invokeHandlers(event);
+                        }
+                        boundary = buffer.indexOf('\n\n');
+                    }
+                }
+            } catch (error) {
+                if (signal.aborted) {
+                    return;
+                }
+                console.error('Timer event stream failed', error);
+            }
+        })();
+
+        return {
+            close: () => controller.abort(),
+            onEvent: (handler) => {
+                if (typeof handler === 'function') {
+                    handlers.push(handler);
+                }
+            },
+        };
+    }
 }
 
 // Export for CommonJS and ES modules

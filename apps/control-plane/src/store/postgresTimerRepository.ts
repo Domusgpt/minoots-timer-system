@@ -19,6 +19,7 @@ const serialize = (timer: TimerRecord) => ({
   settledAt: timer.settledAt ?? null,
   failureReason: timer.failureReason ?? null,
   stateVersion: timer.stateVersion ?? 0,
+  jitterMs: timer.jitterMs ?? null,
 });
 
 const deserialize = (row: any): TimerRecord => ({
@@ -41,6 +42,7 @@ const deserialize = (row: any): TimerRecord => ({
   settledAt: row.settled_at ?? undefined,
   failureReason: row.failure_reason ?? undefined,
   stateVersion: row.state_version ?? undefined,
+  jitterMs: row.jitter_ms ?? undefined,
 });
 
 export class PostgresTimerRepository implements TimerRepository {
@@ -51,10 +53,10 @@ export class PostgresTimerRepository implements TimerRepository {
     const query = `
       INSERT INTO ${TABLE} (
         tenant_id, id, requested_by, name, duration_ms, created_at, fire_at, status,
-        metadata, labels, action_bundle, agent_binding, fired_at, cancelled_at, cancel_reason, cancelled_by, settled_at, failure_reason, state_version
+        metadata, labels, action_bundle, agent_binding, fired_at, cancelled_at, cancel_reason, cancelled_by, settled_at, failure_reason, state_version, jitter_ms
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+        $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
       )
       ON CONFLICT (tenant_id, id) DO UPDATE SET
         requested_by = EXCLUDED.requested_by,
@@ -73,7 +75,8 @@ export class PostgresTimerRepository implements TimerRepository {
         cancelled_by = EXCLUDED.cancelled_by,
         settled_at = EXCLUDED.settled_at,
         failure_reason = EXCLUDED.failure_reason,
-        state_version = EXCLUDED.state_version
+        state_version = EXCLUDED.state_version,
+        jitter_ms = EXCLUDED.jitter_ms
       RETURNING *
     `;
 
@@ -97,6 +100,7 @@ export class PostgresTimerRepository implements TimerRepository {
       payload.settledAt,
       payload.failureReason,
       payload.stateVersion,
+      payload.jitterMs,
     ];
 
     const result = await this.pool.query(query, values);

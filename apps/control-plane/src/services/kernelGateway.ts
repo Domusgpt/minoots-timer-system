@@ -72,11 +72,34 @@ export interface KernelGatewayContext {
   headers: Record<string, string>;
 }
 
+export type KernelTimerEvent =
+  | { type: 'scheduled'; timer: TimerRecord }
+  | { type: 'fired'; timer: TimerRecord }
+  | { type: 'cancelled'; timer: TimerRecord; reason?: string }
+  | { type: 'settled'; timer: TimerRecord };
+
+export interface KernelTimerEventEnvelope {
+  envelopeId: string;
+  tenantId: string;
+  occurredAtIso: string;
+  dedupeKey: string;
+  traceId?: string;
+  signature: string;
+  signatureVersion: string;
+  eventType: KernelTimerEvent['type'];
+  event: KernelTimerEvent;
+}
+
+export interface KernelEventStream extends AsyncIterable<KernelTimerEventEnvelope> {
+  close(): void;
+}
+
 export interface KernelGateway {
   schedule(command: TimerScheduleCommand, context: KernelGatewayContext): Promise<TimerRecord>;
   cancel(command: TimerCancelCommand, context: KernelGatewayContext): Promise<TimerRecord | null>;
   list(tenantId: string, context: KernelGatewayContext): Promise<TimerRecord[]>;
   get(tenantId: string, timerId: string, context: KernelGatewayContext): Promise<TimerRecord | null>;
+  streamEvents(tenantId: string, context: KernelGatewayContext): KernelEventStream;
 }
 
 export class KernelNotLeaderError extends Error {
@@ -143,6 +166,10 @@ export class InMemoryKernelGateway implements KernelGateway {
     _context: KernelGatewayContext,
   ): Promise<TimerRecord | null> {
     return this.repository.findById(tenantId, timerId);
+  }
+
+  streamEvents(_tenantId: string, _context: KernelGatewayContext): KernelEventStream {
+    return createEmptyEventStream();
   }
 }
 
@@ -249,6 +276,13 @@ export class GrpcKernelGateway implements KernelGateway {
     metadata.set('x-tenant-id', context.tenantId);
     return metadata;
   }
+
+  streamEvents(tenantId: string, context: KernelGatewayContext): KernelEventStream {
+    const metadata = this.buildMetadata(context);
+    const request = { tenantId };
+    const stream = (this.client as any).streamTimerEvents(request, metadata);
+    return createGrpcEventStream(stream);
+  }
 }
 
 export const createKernelGateway = (): KernelGateway => {
@@ -262,6 +296,15 @@ export const createKernelGateway = (): KernelGateway => {
 
   return new GrpcKernelGateway(grpcUrl);
 };
+
+const createEmptyEventStream = (): KernelEventStream => ({
+  async *[Symbol.asyncIterator]() {
+    return;
+  },
+  close() {
+    // no-op for tests and offline mode
+  },
+});
 
 const buildScheduleRequest = (command: TimerScheduleCommand) => ({
   tenantId: command.tenantId,
@@ -303,7 +346,87 @@ const mapTimer = (payload: any): TimerRecord => {
       : payload.state_version !== undefined
         ? Number(payload.state_version)
         : undefined,
+    jitterMs:
+      payload.jitterMs !== undefined
+        ? Number(payload.jitterMs)
+        : payload.jitter_ms !== undefined
+          ? Number(payload.jitter_ms)
+          : undefined,
   };
+};
+
+const mapTimerEventEnvelope = (payload: any): KernelTimerEventEnvelope => {
+  if (!payload) {
+    throw new Error('Kernel stream returned empty event envelope payload');
+  }
+  const event = decodeTimerEvent(payload.event, payload.eventType);
+  return {
+    envelopeId: payload.envelopeId,
+    tenantId: payload.tenantId,
+    occurredAtIso: payload.occurredAtIso,
+    dedupeKey: payload.dedupeKey,
+    traceId: optionalString(payload.traceId),
+    signature: payload.signature,
+    signatureVersion: payload.signatureVersion,
+    eventType: event.type,
+    event,
+  };
+};
+
+const decodeTimerEvent = (payload: any, explicitType?: string): KernelTimerEvent => {
+  if (!payload) {
+    throw new Error('Kernel stream returned empty event payload');
+  }
+  const scheduled = payload.scheduled ?? payload.Scheduled;
+  if (scheduled) {
+    return { type: 'scheduled', timer: mapTimer(extractTimerPayload(scheduled)) };
+  }
+  const fired = payload.fired ?? payload.Fired;
+  if (fired) {
+    return { type: 'fired', timer: mapTimer(extractTimerPayload(fired)) };
+  }
+  const cancelled = payload.cancelled ?? payload.Cancelled;
+  if (cancelled) {
+    return {
+      type: 'cancelled',
+      timer: mapTimer(extractTimerPayload(cancelled)),
+      reason: optionalString(cancelled.reason),
+    };
+  }
+  const settled = payload.settled ?? payload.Settled;
+  if (settled) {
+    return { type: 'settled', timer: mapTimer(extractTimerPayload(settled)) };
+  }
+
+  const discriminantSource = explicitType ?? payload.event;
+  const discriminant = typeof discriminantSource === 'string' ? discriminantSource.toLowerCase() : undefined;
+  if (discriminant) {
+    const baseTimer = payload.timer ? mapTimer(payload.timer) : mapTimer(extractTimerPayload(payload));
+    switch (discriminant) {
+      case 'scheduled':
+        return { type: 'scheduled', timer: baseTimer };
+      case 'fired':
+        return { type: 'fired', timer: baseTimer };
+      case 'cancelled':
+        return { type: 'cancelled', timer: baseTimer, reason: optionalString(payload.reason) };
+      case 'settled':
+        return { type: 'settled', timer: baseTimer };
+      default:
+        break;
+    }
+  }
+
+  throw new Error('Unsupported kernel timer event payload shape');
+};
+
+const extractTimerPayload = (value: any): any => {
+  if (!value) {
+    return value;
+  }
+  if (value.timer) {
+    return value.timer;
+  }
+  return value;
 };
 
 const mapStatus = (status: unknown): TimerStatus => {
@@ -380,6 +503,83 @@ const normalizeGrpcError = (method: string, error: unknown): Error => {
     return error;
   }
   return new Error(`Kernel gRPC call ${method} failed`);
+};
+
+const createGrpcEventStream = (stream: grpc.ClientReadableStream<any>): KernelEventStream => {
+  let closed = false;
+  let ended = false;
+  let pending: (() => void) | null = null;
+  let error: Error | null = null;
+  const queue: KernelTimerEventEnvelope[] = [];
+
+  const wake = () => {
+    if (pending) {
+      pending();
+      pending = null;
+    }
+  };
+
+  stream.on('data', (payload) => {
+    try {
+      queue.push(mapTimerEventEnvelope(payload));
+    } catch (err) {
+      const errorObj = err instanceof Error ? err : new Error(String(err));
+      logger.error({ error: errorObj }, 'Failed to decode timer event envelope from kernel stream');
+    }
+    wake();
+  });
+
+  stream.on('error', (err) => {
+    if (!ended) {
+      error = normalizeGrpcError('streamTimerEvents', err);
+    }
+    wake();
+  });
+
+  stream.on('end', () => {
+    ended = true;
+    wake();
+  });
+
+  const iterator = async function* (): AsyncGenerator<KernelTimerEventEnvelope> {
+    try {
+      while (true) {
+        if (queue.length === 0) {
+          if (error) {
+            throw error;
+          }
+          if (ended) {
+            return;
+          }
+          await new Promise<void>((resolve) => {
+            pending = resolve;
+          });
+          continue;
+        }
+        const next = queue.shift();
+        if (next) {
+          yield next;
+        }
+      }
+    } finally {
+      if (!closed) {
+        closed = true;
+        stream.cancel();
+      }
+    }
+  };
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield* iterator();
+    },
+    close() {
+      if (!closed) {
+        closed = true;
+        stream.cancel();
+      }
+    },
+  };
 };
 
 const isGrpcNotFound = (error: unknown): boolean => {

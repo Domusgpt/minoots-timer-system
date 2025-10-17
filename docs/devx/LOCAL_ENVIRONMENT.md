@@ -23,7 +23,7 @@ Use the shared bootstrap script to start Postgres, NATS JetStream, and the OpenT
 
 The script performs the following steps:
 1. `docker compose -f docker-compose.dev.yml up -d`
-2. `npm run db:migrate` within `apps/control-plane`
+2. `npm run db:migrate` within `apps/control-plane` (creates timer + raft persistence tables including `kernel_raft_log` and `kernel_raft_metadata`)
 3. `npm run policy:seed` within `apps/control-plane` (ensures tenants, API keys, and quotas)
 4. `node services/action-orchestrator/scripts/ensure-jetstream.js`
 
@@ -50,6 +50,20 @@ KERNEL_DATABASE_URL=postgres://minoots:development@localhost:5432/minoots \
 ```
 
 If `KERNEL_STORE` is omitted or set to an unknown value the kernel falls back to the in-memory store.
+
+### 4.2 Event envelope signing
+
+Wave 1 adds signed event envelopes so downstream consumers can discard spoofed timer events. The kernel and action orchestrator
+derive their HMAC signatures from a shared secret. Set `EVENT_ENVELOPE_SECRET` (or `KERNEL_ENVELOPE_SECRET`) in your `.env`
+before launching either service:
+
+```bash
+export EVENT_ENVELOPE_SECRET=$(openssl rand -hex 32)
+```
+
+The orchestrator reads the same variable and verifies every JetStream/gRPC event before executing actions. When the secret is
+missing both services fall back to a well-known development default, which is convenient for quick smoke tests but should not
+be used outside of local workspaces.
 
 ### 4.1 Leadership coordination options
 
@@ -104,7 +118,8 @@ cd services/action-orchestrator
 npm run dev
 ```
 
-Set `NATS_JETSTREAM_STREAM`, `NATS_JETSTREAM_CONSUMER`, and `NATS_DLQ_SUBJECT` in `.env` to match the bootstrap defaults.
+Set `NATS_JETSTREAM_URL` (or `NATS_URL`), `NATS_JETSTREAM_STREAM`, `NATS_JETSTREAM_CONSUMER`, and `NATS_DLQ_SUBJECT` in `.env` to match the bootstrap defaults.
+When these variables are present, the horology kernel publishes signed `TimerEventEnvelope` JSON directly to `NATS_SUBJECT`, letting any JetStream consumer verify HMAC signatures before executing actions.
 Use the DLQ utility to inspect or replay failed events:
 
 ```bash
@@ -118,7 +133,22 @@ npm run dlq:inspect # or dlq:replay
   ```bash
   docker exec -it minoots-postgres psql -U minoots -d minoots -c "SELECT id, tenant_id, status FROM timer_records;"
   ```
+- Verify Raft durability by inspecting `kernel_raft_log` and the metadata snapshot:
+
+  ```bash
+  docker exec -it minoots-postgres psql -U minoots -d minoots \
+    -c "SELECT log_index, entry FROM kernel_raft_log ORDER BY log_index;"
+  docker exec -it minoots-postgres psql -U minoots -d minoots \
+    -c "SELECT vote, committed, snapshot_meta FROM kernel_raft_metadata;"
+  ```
+- Confirm OTEL spans are flowing for raft persistence by tailing the collector logs and
+  filtering for the `horology.kernel.raft.*` span names:
+
+  ```bash
+  docker logs minoots-otel-collector | grep "horology.kernel.raft"
+  ```
 - Use `nats stream view MINOOTS_TIMER` to verify JetStream subjects and DLQ messages.
+- Inspect live payloads with `nats subscribe minoots.timer.fired` and confirm the envelopes include `signature_version` and match the configured `EVENT_ENVELOPE_SECRET`.
 
 ## 7. Cleanup
 Tear down the infrastructure when finished:
@@ -128,3 +158,141 @@ docker compose -f docker-compose.dev.yml down
 ```
 
 This environment baseline satisfies the Wave 0 exit criteria: durable timers in Postgres, JetStream fan-out, and OTEL traces collected locally.
+
+## 8. Postgres-backed test harness
+
+Kernel tests that exercise Postgres persistence (command log + restore flows) expect a `TEST_DATABASE_URL`
+to be present. Copy the connection string from `.env` or `.env.example` and export it before running
+`cargo test` so SQLx can migrate and reuse the same containerized database:
+
+```bash
+export TEST_DATABASE_URL=postgres://minoots:development@localhost:5432/minoots
+cargo test --manifest-path services/horology-kernel/Cargo.toml
+```
+
+The helper in `services/horology-kernel/src/test_support.rs` falls back to `DATABASE_URL` if the test-specific
+variable is not set, but defining `TEST_DATABASE_URL` keeps local development isolated from any other Postgres
+instances you may have running.
+
+The restart harness also verifies that the Postgres command log captures lifecycle events after a kernel reboot.
+Inspect the entries with psql to confirm both the `fire` and `settle` commands were recorded for the restored timer:
+
+```bash
+docker exec -it minoots-postgres psql -U minoots -d minoots \
+  -c "SELECT command, timer_id, tenant_id FROM timer_command_log ORDER BY id;"
+```
+
+## 9. JetStream integration harness
+
+Wave 1 completes with an end-to-end JetStream test that spawns a local `nats-server`, publishes a signed
+`TimerEventEnvelope` through the kernel forwarder, and consumes it via a durable JetStream consumer to verify
+the signature and persistence contract. Install a JetStream-capable `nats-server` binary and point the test harness
+at it with `NATS_SERVER_BIN` before running the suite:
+
+```bash
+curl -L -o /tmp/nats-server.tar.gz \
+  https://github.com/nats-io/nats-server/releases/download/v2.10.16/nats-server-v2.10.16-linux-amd64.tar.gz
+tar -xzf /tmp/nats-server.tar.gz -C /tmp
+export NATS_SERVER_BIN=/tmp/nats-server-v2.10.16-linux-amd64/nats-server
+cargo test --manifest-path services/horology-kernel/Cargo.toml --tests
+```
+
+The harness automatically provisions a temporary JetStream store and consumer, so the only prerequisite is ensuring
+the `nats-server` binary is available. The test will be skipped if the binary cannot be found, but Wave 1 exit criteria
+require the harness to run and pass before shipping changes that touch the event pipeline.
+
+## 10. Streaming timer events (Wave 2)
+
+Wave 2 introduces a first-class streaming surface so agents can subscribe to live timer
+state transitions without polling. The control plane now exposes a Server-Sent Events
+endpoint at `/timers/stream` that proxies the kernel's gRPC stream. To exercise it locally:
+
+1. Export the same `EVENT_ENVELOPE_SECRET` for the kernel and control plane so envelope
+   signatures can be verified end-to-end.
+2. Start the kernel, control plane, and action orchestrator as described above.
+3. In a new terminal, launch the stream and pretty-print each event:
+
+```bash
+curl -N -H "X-API-Key: local-dev-key" \
+  -H "x-tenant-id: tenant-local" \
+  "http://localhost:4000/timers/stream" | jq -r '.data'
+```
+
+Each event payload contains the signed envelope plus the timer snapshot, including the
+new `jitterMs` field that records the difference (in milliseconds) between the expected
+fire time and the actual execution timestamp.
+
+The SDK gained a convenience helper so agents can hook into the stream without hand
+rolling an SSE parser:
+
+```javascript
+const sdk = new MinootsSDK({ baseURL: 'http://localhost:4000' });
+const subscription = await sdk.streamTimers({
+  onEvent: ({ type, data }) => {
+    console.log('Timer event', type, data.event.timer.id, data.event.timer.jitterMs);
+  },
+});
+
+// Later, tear down the stream when the agent shuts down
+subscription.close();
+```
+
+## 11. Kernel jitter telemetry
+
+The kernel now tracks observed delivery jitter and feeds a rolling average back into the
+scheduler so new timers automatically compensate for local execution drift. Jitter samples
+are persisted alongside each timer record (`timer_records.jitter_ms`) and show up in the
+streaming envelopes and control plane responses.
+
+To validate the telemetry locally:
+
+```bash
+# Schedule a timer with a short duration
+curl -X POST "http://localhost:4000/timers" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: local-dev-key" \
+  -d '{
+        "tenantId": "tenant-local",
+        "requestedBy": "dev",
+        "duration": 250,
+        "name": "jitter-demo"
+      }'
+
+# After it fires, inspect the jitter column
+psql "$DATABASE_URL" -c "SELECT id, jitter_ms FROM timer_records ORDER BY created_at DESC LIMIT 5;"
+```
+
+## 12. Agent command bus connectors
+
+Wave 2 extends the action orchestrator with a pluggable command bus that simulates MCP,
+LangChain, AutoGen, Webhook v2, and custom connectors. Progress events surface via the
+structured logger, and acknowledgements are attached to the action execution metadata.
+
+To observe the progress feed while a timer fires:
+
+```bash
+# In one terminal, tail orchestrator logs
+npm --prefix services/action-orchestrator run dev
+
+# In another terminal, create a timer with an agent_prompt action
+curl -X POST "http://localhost:4000/timers" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: local-dev-key" \
+  -d '{
+        "tenantId": "tenant-local",
+        "requestedBy": "agent",
+        "duration": 200,
+        "actionBundle": {
+          "actions": [
+            {
+              "id": "notify-agent",
+              "kind": "agent_prompt",
+              "parameters": { "adapter": "mcp", "target": "demo-agent" }
+            }
+          ]
+        }
+      }'
+```
+
+The orchestrator logs each bus milestone (dispatch, connector routing, acknowledgement)
+and the timer stream exposes the acknowledgement metadata for downstream consumers.
