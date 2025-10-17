@@ -18,17 +18,19 @@ use openraft::storage::Adaptor;
 use openraft::{
     BasicNode, Config, Raft, RaftMetrics, RaftNetwork, RaftNetworkFactory, SnapshotPolicy,
 };
-use openraft_memstore::{MemStore, TypeConfig as MemStoreConfig};
+use openraft_memstore::TypeConfig as MemStoreConfig;
 use rand::{thread_rng, Rng};
 use sqlx::{Pool, Postgres, Row};
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, warn};
 
 use std::io;
 
 use crate::leadership::LeaderHandle;
+
+pub mod postgres_store;
 
 #[derive(Clone, Debug)]
 pub struct PostgresRaftSettings {
@@ -132,6 +134,8 @@ impl PostgresRaftCoordinator {
 }
 
 async fn ensure_table(pool: &Pool<Postgres>) -> Result<()> {
+    let span = info_span!("horology.kernel.raft.ensure_state_table");
+    let _guard = span.enter();
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS kernel_raft_state (
@@ -144,11 +148,20 @@ async fn ensure_table(pool: &Pool<Postgres>) -> Result<()> {
     )
     .execute(pool)
     .await
+    .map(|result| {
+        debug!(
+            rows = result.rows_affected(),
+            "ensured kernel_raft_state table"
+        );
+        result
+    })
     .context("failed to create kernel_raft_state table")?;
     Ok(())
 }
 
 async fn send_heartbeat(pool: &Pool<Postgres>, node_id: &str) -> Result<()> {
+    let span = info_span!("horology.kernel.raft.send_heartbeat", node = %node_id);
+    let _guard = span.enter();
     sqlx::query(
         r#"
         UPDATE kernel_raft_state
@@ -159,6 +172,10 @@ async fn send_heartbeat(pool: &Pool<Postgres>, node_id: &str) -> Result<()> {
     .bind(node_id)
     .execute(pool)
     .await
+    .map(|result| {
+        debug!(rows = result.rows_affected(), "updated leader heartbeat");
+        result
+    })
     .context("failed to update heartbeat")?;
     Ok(())
 }
@@ -169,6 +186,12 @@ async fn run_election_round(
     is_leader: &Arc<Mutex<bool>>,
 ) -> Result<()> {
     let timeout = settings.election_timeout;
+    let span = info_span!(
+        "horology.kernel.raft.election_round",
+        node = %settings.node_id,
+        timeout_ms = timeout.as_millis()
+    );
+    let _guard = span.enter();
     let stale = sqlx::query(
         r#"
         SELECT leader_id, heartbeat_at, term
@@ -195,12 +218,14 @@ async fn run_election_round(
             }
             *guard = true;
             leader_handle.set_leader(true);
+            debug!(term, "maintaining leadership after election round");
             return Ok(());
         }
 
         if now - heartbeat_at < ChronoDuration::from_std(timeout)? {
             *guard = false;
             leader_handle.set_leader(false);
+            debug!(leader = %leader_id, term, "observed healthy leader heartbeat");
             return Ok(());
         }
 
@@ -212,6 +237,7 @@ async fn run_election_round(
         } else {
             *guard = false;
             leader_handle.set_leader(false);
+            debug!(leader = %leader_id, term, "failed to assume leadership; competing node refreshed");
         }
         return Ok(());
     }
@@ -233,6 +259,7 @@ async fn run_election_round(
         *guard = true;
         leader_handle.set_leader(true);
         info!(node = %settings.node_id, term = 1, "initialized raft state as leader");
+        debug!("inserted initial kernel_raft_state row");
     }
 
     Ok(())
@@ -245,6 +272,13 @@ async fn takeover(
     allow_current: bool,
     timeout: Duration,
 ) -> Result<bool> {
+    let span = info_span!(
+        "horology.kernel.raft.takeover",
+        node = %node_id,
+        term,
+        allow_current
+    );
+    let _guard = span.enter();
     let result = sqlx::query(
         r#"
         UPDATE kernel_raft_state
@@ -263,7 +297,13 @@ async fn takeover(
     .await
     .context("failed to update leader row")?;
 
-    Ok(result.rows_affected() > 0)
+    let changed = result.rows_affected() > 0;
+    if changed {
+        debug!("updated leader row");
+    } else {
+        debug!("leader row unchanged");
+    }
+    Ok(changed)
 }
 
 fn jittered_interval(base: Duration) -> Duration {
@@ -286,6 +326,7 @@ pub struct RaftClusterSettings {
     pub election_timeout_min_ms: u64,
     pub election_timeout_max_ms: u64,
     pub heartbeat_interval_ms: u64,
+    pub storage_pool: Option<Pool<Postgres>>,
 }
 
 type LeadershipRaft = Raft<MemStoreConfig>;
@@ -341,8 +382,16 @@ impl RaftSupervisor {
         config.snapshot_policy = SnapshotPolicy::Never;
         let config = Arc::new(config.validate().map_err(|err| anyhow!(err))?);
 
-        let store = MemStore::new_async().await;
-        let (log_store, state_machine) = Adaptor::new(store.clone());
+        let store = if let Some(pool) = settings.storage_pool.clone() {
+            info!("using postgres-backed raft storage");
+            postgres_store::PostgresBackedStore::new(pool)
+                .await
+                .context("failed to initialize postgres-backed raft store")?
+        } else {
+            info!("using in-memory raft storage");
+            postgres_store::PostgresBackedStore::in_memory().await
+        };
+        let (log_store, state_machine) = Adaptor::new(store);
         let network = HttpRaftNetworkFactory::new(peers.clone());
         let raft = Raft::new(
             settings.node_id,

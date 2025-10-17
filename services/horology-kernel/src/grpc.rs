@@ -11,10 +11,12 @@ use crate::pb::{
     self, TimerCancelRequest, TimerEventStreamRequest, TimerGetRequest, TimerListRequest,
     TimerScheduleRequest,
 };
-use crate::{HorologyKernel, KernelError, TimerEvent, TimerInstance, TimerSpec, TimerStatus};
+use crate::{
+    EventEnvelope, HorologyKernel, KernelError, TimerEvent, TimerInstance, TimerSpec, TimerStatus,
+};
 
 pub type TimerEventStream =
-    Pin<Box<dyn Stream<Item = Result<pb::TimerEvent, Status>> + Send + 'static>>;
+    Pin<Box<dyn Stream<Item = Result<pb::TimerEventEnvelope, Status>> + Send + 'static>>;
 
 #[derive(Clone)]
 pub struct HorologyKernelService {
@@ -124,13 +126,13 @@ impl HorologyKernelApi for HorologyKernelService {
 
         let receiver = self.kernel.subscribe();
         let stream = BroadcastStream::new(receiver).filter_map(move |event| match event {
-            Ok(event)
+            Ok(envelope)
                 if tenant_filter
                     .as_ref()
-                    .map(|tenant| event_belongs_to_tenant(&event, tenant))
+                    .map(|tenant| envelope_belongs_to_tenant(&envelope, tenant))
                     .unwrap_or(true) =>
             {
-                Some(event_to_proto(event))
+                Some(envelope_to_proto(envelope))
             }
             Ok(_) => None,
             Err(_) => Some(Err(Status::aborted("event channel closed"))),
@@ -264,13 +266,24 @@ fn event_to_proto(event: TimerEvent) -> Result<pb::TimerEvent, Status> {
     }
 }
 
-fn event_belongs_to_tenant(event: &TimerEvent, tenant_id: &str) -> bool {
-    match event {
-        TimerEvent::Scheduled(timer) => timer.tenant_id == tenant_id,
-        TimerEvent::Fired(timer) => timer.tenant_id == tenant_id,
-        TimerEvent::Cancelled { timer, .. } => timer.tenant_id == tenant_id,
-        TimerEvent::Settled(timer) => timer.tenant_id == tenant_id,
-    }
+fn envelope_to_proto(envelope: EventEnvelope) -> Result<pb::TimerEventEnvelope, Status> {
+    let event_type = envelope.event_type().as_str().to_string();
+    let event = event_to_proto(envelope.event)?;
+    Ok(pb::TimerEventEnvelope {
+        envelope_id: envelope.envelope_id.to_string(),
+        tenant_id: envelope.tenant_id,
+        occurred_at_iso: envelope.occurred_at_iso,
+        dedupe_key: envelope.dedupe_key,
+        trace_id: envelope.trace_id.unwrap_or_default(),
+        signature: envelope.signature,
+        signature_version: envelope.signature_version,
+        event_type,
+        event: Some(event),
+    })
+}
+
+fn envelope_belongs_to_tenant(envelope: &EventEnvelope, tenant_id: &str) -> bool {
+    envelope.tenant_id == tenant_id
 }
 
 fn map_kernel_error(error: KernelError) -> Status {

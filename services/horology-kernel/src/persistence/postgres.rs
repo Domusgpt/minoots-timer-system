@@ -28,11 +28,15 @@ impl PostgresTimerStore {
             .await
             .with_context(|| "failed to connect to postgres for timer store")?;
         info!("connected to postgres for timer store");
-        Ok(Self { pool })
+        Ok(Self::from_pool(pool))
     }
 
     pub fn pool(&self) -> Pool<Postgres> {
         self.pool.clone()
+    }
+
+    pub fn from_pool(pool: Pool<Postgres>) -> Self {
+        Self { pool }
     }
 }
 
