@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>MINOOTS - The Metronome for Autonomous AI</title>
+    <meta name="description" content="Independent timer system for autonomous AI agents and enterprise workflows. Durable execution with zero-resource hibernation.">
+    <style>
+        /* === MINOOTS VISUAL IDENTITY === */
+        :root {
+            /* Color Palette - Time/Precision Theme */
+            --bg-primary: #0a0e27;
+            --bg-secondary: #0d1117;
+            --accent-cyan: #00ffff;
+            --accent-purple: #9d4edd;
+            --accent-teal: #06ffa5;
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.7);
+
+            /* Timing */
+            --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-smooth: 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+
+            /* Mobile-first */
+            --touch-target: 56px;
+            --safe-area-top: env(safe-area-inset-top, 0);
+            --safe-area-bottom: env(safe-area-inset-bottom, 0);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            font-size: 16px; /* Prevents iOS zoom */
+            line-height: 1.6;
+        }
+
+        /* === HOLOGRAPHIC BACKGROUND LAYERS === */
+        .holo-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .holo-layer-1 {
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 20% 50%, rgba(0, 255, 255, 0.15) 0%, transparent 50%);
+            mix-blend-mode: screen;
+            transform: translate(-50%, -50%);
+            animation: float1 20s ease-in-out infinite;
+        }
+
+        .holo-layer-2 {
+            position: absolute;
+            width: 150%;
+            height: 150%;
+            background: radial-gradient(circle at 80% 50%, rgba(157, 78, 237, 0.12) 0%, transparent 60%);
+            mix-blend-mode: overlay;
+            transform: translate(-25%, -25%);
+            animation: float2 15s ease-in-out infinite;
+        }
+
+        .holo-layer-3 {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background:
+                linear-gradient(45deg, transparent 45%, rgba(6, 255, 165, 0.03) 50%, transparent 55%),
+                linear-gradient(-45deg, transparent 45%, rgba(0, 255, 255, 0.03) 50%, transparent 55%);
+            background-size: 60px 60px;
+            mix-blend-mode: color-dodge;
+            animation: gridPulse 3s ease-in-out infinite;
+        }
+
+        @keyframes float1 {
+            0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
+            50% { transform: translate(-40%, -60%) rotate(180deg); }
+        }
+
+        @keyframes float2 {
+            0%, 100% { transform: translate(-25%, -25%) rotate(0deg); }
+            50% { transform: translate(-35%, -15%) rotate(-180deg); }
+        }
+
+        @keyframes gridPulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.6; }
+        }
+
+        /* === CONTAINER === */
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* === HEADER === */
+        header {
+            padding: 40px 0;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: clamp(2.5rem, 8vw, 5rem);
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple), var(--accent-teal));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: 0 0 80px rgba(0, 255, 255, 0.5);
+            animation: logoPulse 4s ease-in-out infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes logoPulse {
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(1.3); }
+        }
+
+        .tagline {
+            font-size: clamp(1rem, 3vw, 1.5rem);
+            color: var(--text-secondary);
+            font-weight: 300;
+            letter-spacing: 0.05em;
+        }
+
+        /* === HERO SECTION === */
+        .hero {
+            text-align: center;
+            padding: 60px 0;
+            position: relative;
+        }
+
+        .hero-title {
+            font-size: clamp(2rem, 6vw, 3.5rem);
+            font-weight: 700;
+            margin-bottom: 20px;
+            line-height: 1.2;
+        }
+
+        .hero-subtitle {
+            font-size: clamp(1.1rem, 3vw, 1.5rem);
+            color: var(--text-secondary);
+            max-width: 800px;
+            margin: 0 auto 40px;
+        }
+
+        /* === HOLOGRAPHIC TIMER VISUALIZATION === */
+        .timer-viz {
+            width: min(500px, 90vw);
+            height: min(500px, 90vw);
+            margin: 60px auto;
+            position: relative;
+            perspective: 1000px;
+        }
+
+        .timer-ring {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            border: 3px solid var(--accent-cyan);
+            box-shadow:
+                0 0 20px var(--accent-cyan),
+                inset 0 0 20px rgba(0, 255, 255, 0.2);
+            animation: timerPulse 2s ease-in-out infinite;
+        }
+
+        .timer-ring-1 { width: 80%; height: 80%; animation-delay: 0s; }
+        .timer-ring-2 { width: 60%; height: 60%; animation-delay: 0.3s; border-color: var(--accent-purple); box-shadow: 0 0 20px var(--accent-purple), inset 0 0 20px rgba(157, 78, 237, 0.2); }
+        .timer-ring-3 { width: 40%; height: 40%; animation-delay: 0.6s; border-color: var(--accent-teal); box-shadow: 0 0 20px var(--accent-teal), inset 0 0 20px rgba(6, 255, 165, 0.2); }
+
+        @keyframes timerPulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
+            50% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
+        }
+
+        .timer-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: clamp(2rem, 6vw, 4rem);
+            font-weight: 900;
+            font-family: 'Courier New', monospace;
+            color: var(--accent-cyan);
+            text-shadow: 0 0 30px var(--accent-cyan);
+        }
+
+        /* === NEOSKEUOMORPHIC CARDS === */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+            gap: 30px;
+            margin: 80px 0;
+        }
+
+        .feature-card {
+            background: linear-gradient(145deg, #1a1a2e, #16213e);
+            border-radius: 20px;
+            padding: 40px 30px;
+            position: relative;
+            transition: transform var(--transition-smooth);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow:
+                20px 20px 60px #0a0a12,
+                -20px -20px 60px #1e1e34,
+                inset 5px 5px 10px rgba(255, 255, 255, 0.03),
+                inset -5px -5px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg,
+                rgba(0, 255, 255, 0.1) 0%,
+                transparent 50%,
+                rgba(157, 78, 237, 0.1) 100%);
+            mix-blend-mode: overlay;
+            border-radius: 20px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity var(--transition-smooth);
+        }
+
+        .feature-card:hover {
+            transform: translateY(-10px);
+        }
+
+        .feature-card:hover::before {
+            opacity: 1;
+        }
+
+        .feature-icon {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            filter: drop-shadow(0 0 10px var(--accent-cyan));
+        }
+
+        .feature-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 15px;
+            color: var(--accent-cyan);
+        }
+
+        .feature-desc {
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        /* === STATS SECTION === */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+            gap: 30px;
+            margin: 80px 0;
+            text-align: center;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 15px;
+            padding: 30px 20px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.1);
+            transition: all var(--transition-smooth);
+        }
+
+        .stat-card:hover {
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.3);
+            transform: scale(1.05);
+        }
+
+        .stat-number {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 900;
+            color: var(--accent-teal);
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 0 20px var(--accent-teal);
+        }
+
+        .stat-label {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            margin-top: 10px;
+        }
+
+        /* === API STATUS === */
+        .api-status {
+            background: rgba(0, 0, 0, 0.4);
+            border: 2px solid var(--accent-teal);
+            border-radius: 15px;
+            padding: 30px;
+            text-align: center;
+            margin: 60px 0;
+            box-shadow: 0 0 40px rgba(6, 255, 165, 0.2);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent-teal);
+            box-shadow: 0 0 20px var(--accent-teal);
+            animation: statusPulse 2s ease-in-out infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes statusPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .api-url {
+            font-family: 'Courier New', monospace;
+            color: var(--accent-cyan);
+            font-size: 1.1rem;
+            word-break: break-all;
+        }
+
+        /* === CALL-TO-ACTION BUTTONS === */
+        .cta-section {
+            text-align: center;
+            margin: 80px 0;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 18px 40px;
+            margin: 10px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            border-radius: 12px;
+            text-decoration: none;
+            transition: all var(--transition-smooth);
+            min-width: var(--touch-target);
+            min-height: var(--touch-target);
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            border: 2px solid transparent;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-teal));
+            color: var(--bg-primary);
+            box-shadow: 0 10px 40px rgba(0, 255, 255, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-5px) scale(1.05);
+            box-shadow: 0 15px 60px rgba(0, 255, 255, 0.5);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--accent-cyan);
+            border: 2px solid var(--accent-cyan);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 255, 255, 0.1);
+            transform: translateY(-5px);
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.3);
+        }
+
+        /* === USE CASES === */
+        .use-cases {
+            margin: 80px 0;
+        }
+
+        .section-title {
+            font-size: clamp(2rem, 5vw, 3rem);
+            text-align: center;
+            margin-bottom: 60px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .use-case {
+            background: rgba(255, 255, 255, 0.02);
+            border-left: 4px solid var(--accent-purple);
+            padding: 30px;
+            margin: 30px 0;
+            border-radius: 10px;
+            transition: all var(--transition-smooth);
+        }
+
+        .use-case:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-left-color: var(--accent-teal);
+            transform: translateX(10px);
+        }
+
+        .use-case-title {
+            font-size: 1.5rem;
+            color: var(--accent-teal);
+            margin-bottom: 15px;
+        }
+
+        .code-block {
+            background: #0d1117;
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            color: var(--accent-cyan);
+        }
+
+        /* === FOOTER === */
+        footer {
+            text-align: center;
+            padding: 60px 20px;
+            margin-top: 100px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .footer-links {
+            margin: 30px 0;
+        }
+
+        .footer-link {
+            color: var(--accent-cyan);
+            text-decoration: none;
+            margin: 0 15px;
+            transition: all var(--transition-fast);
+            font-size: 1.1rem;
+        }
+
+        .footer-link:hover {
+            color: var(--accent-teal);
+            text-shadow: 0 0 20px var(--accent-teal);
+        }
+
+        .paul-phillips-signature {
+            margin-top: 60px;
+            padding: 40px;
+            background: linear-gradient(135deg, rgba(0, 255, 255, 0.05), rgba(157, 78, 237, 0.05));
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+        }
+
+        .signature-title {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-teal));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .signature-quote {
+            font-style: italic;
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            margin: 20px 0;
+        }
+
+        /* === RESPONSIVE === */
+        @media (max-width: 768px) {
+            .features {
+                grid-template-columns: 1fr;
+            }
+
+            .stats {
+                grid-template-columns: 1fr;
+            }
+
+            .btn {
+                display: block;
+                width: 100%;
+                max-width: 400px;
+                margin: 15px auto;
+            }
+
+            .timer-viz {
+                width: 90vw;
+                height: 90vw;
+                max-width: 400px;
+                max-height: 400px;
+            }
+        }
+
+        /* === SCROLL-BASED ANIMATIONS === */
+        .scroll-reveal {
+            opacity: 0;
+            transform: translateY(50px);
+            transition: all 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .scroll-reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body>
+    <!-- Holographic Background Layers -->
+    <div class="holo-bg">
+        <div class="holo-layer-1"></div>
+        <div class="holo-layer-2"></div>
+        <div class="holo-layer-3"></div>
+    </div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1 class="logo">MINOOTS</h1>
+            <p class="tagline">The Metronome for Autonomous AI</p>
+        </header>
+
+        <!-- Hero Section -->
+        <section class="hero">
+            <h2 class="hero-title">Independent Timer System for AI Agents</h2>
+            <p class="hero-subtitle">
+                Durable execution platform that lets AI agents sleep, wake, and execute tasks
+                automatically over hours, days, or weeks. Zero overhead during hibernation.
+            </p>
+
+            <!-- Timer Visualization -->
+            <div class="timer-viz">
+                <div class="timer-ring timer-ring-1"></div>
+                <div class="timer-ring timer-ring-2"></div>
+                <div class="timer-ring timer-ring-3"></div>
+                <div class="timer-text" id="timerDisplay">00:00:00</div>
+            </div>
+        </section>
+
+        <!-- API Status -->
+        <div class="api-status scroll-reveal">
+            <h3>
+                <span class="status-indicator"></span>
+                Live Production API
+            </h3>
+            <p class="api-url">https://api-m3waemr5lq-uc.a.run.app</p>
+            <p style="margin-top: 15px; color: var(--text-secondary);">
+                Production-ready system with authentication, billing, and MCP integration
+            </p>
+        </div>
+
+        <!-- Stats -->
+        <section class="stats scroll-reveal">
+            <div class="stat-card">
+                <div class="stat-number">±1s</div>
+                <div class="stat-label">Timer Precision</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">0%</div>
+                <div class="stat-label">CPU During Sleep</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">99.9%</div>
+                <div class="stat-label">Uptime SLA</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">100K+</div>
+                <div class="stat-label">Concurrent Timers</div>
+            </div>
+        </section>
+
+        <!-- Features -->
+        <section class="features scroll-reveal">
+            <div class="feature-card">
+                <div class="feature-icon">🤖</div>
+                <h3 class="feature-title">AI Agent Native</h3>
+                <p class="feature-desc">
+                    First timer system designed specifically for AI agents. MCP integration
+                    lets Claude agents create workflows through natural conversation.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">💤</div>
+                <h3 class="feature-title">Zero-Resource Sleep</h3>
+                <p class="feature-desc">
+                    Timers consume 0% CPU, 0 memory, and 0 API tokens during sleep periods.
+                    Run thousands of sleeping workflows simultaneously.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">🛡️</div>
+                <h3 class="feature-title">Crash Recovery</h3>
+                <p class="feature-desc">
+                    Timers survive system crashes, restarts, and failures. Full state
+                    persistence ensures workflows always complete.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3 class="feature-title">Precise Timing</h3>
+                <p class="feature-desc">
+                    ±1 second accuracy for timers spanning seconds to weeks. Deterministic
+                    execution with sub-second trigger tolerances.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">🔗</div>
+                <h3 class="feature-title">Multi-Agent Coordination</h3>
+                <p class="feature-desc">
+                    Orchestrate complex workflows across multiple specialized agents.
+                    Agent handoffs with full context preservation.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">🏢</div>
+                <h3 class="feature-title">Enterprise Ready</h3>
+                <p class="feature-desc">
+                    Production-grade infrastructure with authentication, rate limiting,
+                    usage tracking, and Stripe billing integration.
+                </p>
+            </div>
+        </section>
+
+        <!-- Use Cases -->
+        <section class="use-cases scroll-reveal">
+            <h2 class="section-title">Use Cases</h2>
+
+            <div class="use-case">
+                <h3 class="use-case-title">🤖 Autonomous AI Workflows</h3>
+                <p class="feature-desc">
+                    AI agents that schedule themselves to wake up and continue work hours or days later.
+                </p>
+                <div class="code-block">
+workflow.steps = [<br>
+&nbsp;&nbsp;{ action: 'start_data_processing' },<br>
+&nbsp;&nbsp;{ sleep: '4h' },  // Agent hibernates<br>
+&nbsp;&nbsp;{ action: 'check_results_and_continue' }<br>
+];
+                </div>
+            </div>
+
+            <div class="use-case">
+                <h3 class="use-case-title">🚀 CI/CD Pipeline Automation</h3>
+                <p class="feature-desc">
+                    Automated deployment with health checks and automatic rollback conditions.
+                </p>
+                <div class="code-block">
+workflow.steps = [<br>
+&nbsp;&nbsp;{ action: 'trigger_build' },<br>
+&nbsp;&nbsp;{ sleep: '5m' },<br>
+&nbsp;&nbsp;{ action: 'deploy_if_successful' },<br>
+&nbsp;&nbsp;{ sleep: '10m' },<br>
+&nbsp;&nbsp;{ action: 'rollback_if_unhealthy' }<br>
+];
+                </div>
+            </div>
+
+            <div class="use-case">
+                <h3 class="use-case-title">📧 Lead Nurturing Campaigns</h3>
+                <p class="feature-desc">
+                    Automated lead nurturing with intelligent timing and context preservation.
+                </p>
+                <div class="code-block">
+workflow.steps = [<br>
+&nbsp;&nbsp;{ action: 'send_welcome_email' },<br>
+&nbsp;&nbsp;{ sleep: '24h' },<br>
+&nbsp;&nbsp;{ action: 'send_product_demo' },<br>
+&nbsp;&nbsp;{ sleep: '3d' },<br>
+&nbsp;&nbsp;{ action: 'schedule_sales_call' }<br>
+];
+                </div>
+            </div>
+        </section>
+
+        <!-- CTA Section -->
+        <section class="cta-section scroll-reveal">
+            <h2 class="section-title">Get Started</h2>
+            <a href="https://github.com/Domusgpt/minoots-timer-system" class="btn btn-primary" target="_blank">
+                View on GitHub
+            </a>
+            <a href="https://api-m3waemr5lq-uc.a.run.app/health" class="btn btn-secondary" target="_blank">
+                API Documentation
+            </a>
+            <a href="https://github.com/Domusgpt/minoots-timer-system#readme" class="btn btn-secondary" target="_blank">
+                Quick Start Guide
+            </a>
+        </section>
+
+        <!-- Footer -->
+        <footer class="scroll-reveal">
+            <div class="footer-links">
+                <a href="https://github.com/Domusgpt/minoots-timer-system" class="footer-link" target="_blank">GitHub</a>
+                <a href="https://github.com/Domusgpt/minoots-timer-system/issues" class="footer-link" target="_blank">Issues</a>
+                <a href="https://api-m3waemr5lq-uc.a.run.app/pricing" class="footer-link" target="_blank">Pricing</a>
+            </div>
+
+            <div class="paul-phillips-signature">
+                <h3 class="signature-title">🌟 A Paul Phillips Manifestation</h3>
+                <p>
+                    <strong>Send Love, Hate, or Opportunity to:</strong>
+                    <a href="mailto:Paul@clearseassolutions.com" style="color: var(--accent-cyan);">Paul@clearseassolutions.com</a>
+                </p>
+                <p>
+                    <strong>Join The Exoditical Moral Architecture Movement:</strong>
+                    <a href="https://parserator.com" target="_blank" style="color: var(--accent-teal);">Parserator.com</a>
+                </p>
+                <p class="signature-quote">"The Revolution Will Not be in a Structured Format"</p>
+                <p style="margin-top: 20px; color: var(--text-secondary); font-size: 0.9rem;">
+                    © 2025 Paul Phillips - Clear Seas Solutions LLC<br>
+                    All Rights Reserved - Proprietary Technology
+                </p>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // === TIMER DISPLAY ===
+        let seconds = 0;
+        const timerDisplay = document.getElementById('timerDisplay');
+
+        setInterval(() => {
+            seconds++;
+            const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+            const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+            const s = (seconds % 60).toString().padStart(2, '0');
+            timerDisplay.textContent = `${h}:${m}:${s}`;
+        }, 1000);
+
+        // === MOUSE PARALLAX ===
+        document.addEventListener('mousemove', (e) => {
+            const layers = document.querySelectorAll('.holo-layer-1, .holo-layer-2');
+            const mouseX = (e.clientX / window.innerWidth) - 0.5;
+            const mouseY = (e.clientY / window.innerHeight) - 0.5;
+
+            layers.forEach((layer, index) => {
+                const depth = (index + 1) * 15;
+                const moveX = mouseX * depth;
+                const moveY = mouseY * depth;
+                layer.style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
+            });
+        });
+
+        // === SCROLL REVEAL ANIMATIONS ===
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -100px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.scroll-reveal').forEach(el => {
+            observer.observe(el);
+        });
+
+        // === TOUCH OPTIMIZATION ===
+        document.querySelectorAll('.btn, .feature-card, .stat-card').forEach(el => {
+            el.addEventListener('touchstart', function() {
+                this.style.transform = this.style.transform + ' scale(0.98)';
+            }, { passive: true });
+
+            el.addEventListener('touchend', function() {
+                this.style.transform = this.style.transform.replace(' scale(0.98)', '');
+            }, { passive: true });
+        });
+
+        // === PERFORMANCE MONITORING ===
+        const isMobile = /Android|webOS|iPhone|iPad/i.test(navigator.userAgent);
+        const isLowEnd = (navigator.deviceMemory || 4) <= 2;
+
+        if (isMobile || isLowEnd) {
+            // Reduce animation complexity on mobile/low-end devices
+            document.querySelectorAll('.holo-layer-1, .holo-layer-2').forEach(el => {
+                el.style.animation = 'none';
+            });
+        }
+    </script>
+</body>
+</html>

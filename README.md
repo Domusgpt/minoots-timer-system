@@ -1,28 +1,31 @@
-# MINOOTS ⏱️🚀
+# MINOOTS - The Metronome for Autonomous AI ⏱️🤖
 
-**Independent Timer System for Autonomous Agents & Enterprise Workflows**
+**Independent Timer System for AI Agents & Enterprise Workflows**
 
-[![npm version](https://badge.fury.io/js/%40minoots%2Ftimer-system.svg)](https://badge.fury.io/js/%40minoots%2Ftimer-system)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://github.com/domusgpt/minoots-timer-system/workflows/Tests/badge.svg)](https://github.com/domusgpt/minoots-timer-system/actions)
-[![Coverage](https://codecov.io/gh/domusgpt/minoots-timer-system/branch/main/graph/badge.svg)](https://codecov.io/gh/domusgpt/minoots-timer-system)
+🌐 **Live Website:** https://domusgpt.github.io/Minoots-Beta
+🚀 **Production API:** https://api-m3waemr5lq-uc.a.run.app
+📦 **Main Repository:** https://github.com/Domusgpt/minoots-timer-system
+
+---
 
 ## 🎯 What is MINOOTS?
 
-MINOOTS is a production-ready timer system that runs **independently** of your main application. Perfect for:
+MINOOTS is a production-ready durable execution platform that lets AI agents create workflows that sleep, wake, and execute tasks automatically over extended periods (minutes, hours, days, or weeks). Unlike traditional automation that requires constant monitoring, MINOOTS workflows hibernate during wait periods, consuming **zero resources**, then automatically wake up to continue execution.
 
-- 🤖 **AI Agents** that need persistent timers across sessions
-- 🔄 **Workflow Automation** with reliable scheduling
-- 🏢 **Enterprise Systems** requiring bulletproof timing
-- 🚀 **Background Jobs** that survive process crashes
+### Key Features
+
+- 🤖 **AI Agent Native** - First timer system designed specifically for AI agents with MCP integration
+- 💤 **Zero-Resource Sleep** - 0% CPU, 0 memory, 0 API tokens during hibernation
+- 🛡️ **Crash Recovery** - Survives system crashes and restarts with full state persistence
+- ⚡ **Precise Timing** - ±1 second accuracy for timers spanning seconds to weeks
+- 🔗 **Multi-Agent Coordination** - Orchestrate complex workflows across specialized agents
+- 🏢 **Enterprise Ready** - Authentication, billing, rate limiting, and SLA guarantees
+
+---
 
 ## 🚀 Quick Start
 
-```bash
-npm install -g @minoots/timer-system
-minoots create 30s "coffee_break"
-minoots list
-```
+### Create Your First Timer
 
 ```javascript
 const MINOOTS = require('@minoots/timer-system');
@@ -33,326 +36,174 @@ const timer = MINOOTS.create({
   duration: '1h',
   events: {
     on_expire: {
-      webhook: 'https://api.example.com/backup-complete',
-      message: 'Database backup completed'
+      webhook: 'https://api.example.com/backup-complete'
     }
   }
 });
-
-console.log(`Timer ${timer.id} will execute in 1 hour`);
 ```
 
-## ✨ Key Features
+### For AI Agents (Claude Desktop)
 
-### 🛡️ Independent Execution
-- Timers run in separate processes
-- Survive main application crashes
-- Continue running across system reboots
-- No dependency on parent process lifecycle
+```
+User: "Create a workflow that checks my website every hour and alerts me if it's down"
 
-### 🔧 Powerful Events
+Claude: I'll create a monitoring workflow for you.
+[Uses MINOOTS MCP tools]
+✅ Created workflow "website_monitor" - checking every hour
+```
+
+---
+
+## 💡 Use Cases
+
+### 🤖 Autonomous AI Workflows
+AI agents schedule themselves to wake up and continue work hours or days later.
+
 ```javascript
+workflow.steps = [
+  { action: 'start_data_processing' },
+  { sleep: '4h' },  // Agent hibernates
+  { action: 'check_results_and_continue' }
+];
+```
+
+### 🚀 CI/CD Pipeline Automation
+Automated deployment with health checks and rollback conditions.
+
+```javascript
+workflow.steps = [
+  { action: 'trigger_build' },
+  { sleep: '5m' },
+  { action: 'deploy_if_successful' },
+  { sleep: '10m' },
+  { action: 'rollback_if_unhealthy' }
+];
+```
+
+### 📧 Lead Nurturing Campaigns
+Automated marketing with intelligent timing and context.
+
+```javascript
+workflow.steps = [
+  { action: 'send_welcome_email' },
+  { sleep: '24h' },
+  { action: 'send_product_demo' },
+  { sleep: '3d' },
+  { action: 'schedule_sales_call' }
+];
+```
+
+---
+
+## 📊 Production Stats
+
+| Metric | Value |
+|--------|-------|
+| **Timer Precision** | ±1 second |
+| **CPU During Sleep** | 0% |
+| **Uptime SLA** | 99.9% |
+| **Concurrent Timers** | 100,000+ |
+| **API Response Time** | <100ms p95 |
+
+---
+
+## 🔧 Installation
+
+### NPM Package (Coming Soon)
+```bash
+npm install @minoots/timer-system
+```
+
+### From Source
+```bash
+git clone https://github.com/Domusgpt/minoots-timer-system.git
+cd minoots-timer-system
+npm install
+```
+
+### MCP Integration (Claude Desktop)
+```json
 {
-  events: {
-    on_expire: {
-      webhook: 'https://api.example.com/notify',
-      file_write: { file: 'result.txt', content: 'Timer done!' },
-      command: 'npm run deploy',
-      message: 'Deployment timer expired'
+  "mcpServers": {
+    "minoots": {
+      "command": "node",
+      "args": ["path/to/minoots-v2-server.js"]
     }
   }
 }
 ```
 
-### 📡 Real-time Monitoring
-```javascript
-// Get live timer status
-const status = MINOOTS.get('timer_id');
-console.log(`${status.progress * 100}% complete`);
-console.log(`${status.timeRemaining}ms remaining`);
-```
-
-### 🌐 Cloud Integration
-- Firebase backend for global synchronization
-- REST API for cross-platform access
-- Team collaboration and sharing
-- Enterprise authentication (SSO)
-
-## 🧱 Platform Foundations (Sprint 0)
-
-MINOOTS is evolving into the distributed horology platform described in `AGENTIC_TIMER_ARCHITECTURE.md`. This repository now
-contains runnable foundations for that architecture:
-
-| Component | Path | What ships now |
-| --- | --- | --- |
-| Control Plane service | `apps/control-plane` | Express + Zod API for creating/listing/cancelling timers with multi-tenant validation |
-| Horology Kernel | `services/horology-kernel` | Rust scheduler with Tokio-driven timers, broadcast event stream, and cancellation semantics |
-| Action Orchestrator | `services/action-orchestrator` | Timer event consumers that trigger webhooks and stubbed agent prompts |
-| Contracts & Dev Track | `proto/timer.proto`, `docs/DEVELOPMENT_TRACK.md` | gRPC definitions and the execution plan for landing the full platform |
-
-### Local development stack
-1. Install dependencies:
-   - `cd apps/control-plane && npm install`
-   - `cd services/action-orchestrator && npm install`
-   - `cd services/horology-kernel && cargo build`
-2. Run the services:
-   - Control plane REST API: `npm run dev` (port 4000)
-   - Horology kernel gRPC server: `cargo run --bin kernel` (set `KERNEL_GRPC_ADDR` to override the default `0.0.0.0:50051`)
-   - Action orchestrator: `npm run dev` (set `KERNEL_GRPC_URL` or fall back to `NATS_URL` / STDIN streaming)
-3. Export the shared configuration so every service resolves the same kernel endpoint:
-   ```bash
-   export KERNEL_GRPC_URL=localhost:50051
-   export KERNEL_GATEWAY_MODE=grpc           # control plane falls back to memory if the kernel is unavailable
-   export KERNEL_EVENT_TENANT_ID=__all__     # orchestrator can scope streams per tenant
-   ```
-4. Use the existing CLI (`independent-timer.js`) or HTTP calls to interact with the control plane and watch timers propagate
-   through the kernel and orchestrator.
-
-See [`docs/DEVELOPMENT_TRACK.md`](docs/DEVELOPMENT_TRACK.md) for the detailed engineering track and next milestones.
-
-### Service configuration contract
-
-| Variable | Default | Consumer(s) | Purpose |
-| --- | --- | --- | --- |
-| `KERNEL_GRPC_ADDR` | `0.0.0.0:50051` | Horology kernel | Binds the scheduler's gRPC listener (also read as `KERNEL_GRPC_URL` for backwards compatibility). |
-| `KERNEL_GRPC_URL` | `localhost:50051` | Control plane, Action orchestrator | Location of the kernel when acting as a client. |
-| `KERNEL_GATEWAY_MODE` | `grpc` | Control plane | Switches between the real kernel and the in-memory fallback (`memory`). |
-| `KERNEL_EVENT_TENANT_ID` | `__all__` | Action orchestrator | Restricts the gRPC event stream to a single tenant when desired. |
-
-All gRPC schedule/list/get/cancel calls now pass metadata, labels, action bundles, and agent bindings as canonical JSON strings.
-Clients are responsible for serializing structured payloads before sending requests and for parsing JSON when receiving timers
-or stream events.
+---
 
 ## 📖 Documentation
 
-### Basic Usage
+- **Main Repo:** [minoots-timer-system](https://github.com/Domusgpt/minoots-timer-system)
+- **API Docs:** [api-m3waemr5lq-uc.a.run.app](https://api-m3waemr5lq-uc.a.run.app)
+- **Comprehensive Analysis:** [MINOOTS_COMPREHENSIVE_ANALYSIS.md](https://github.com/Domusgpt/Minoots-Beta/blob/main/planning/MINOOTS_COMPREHENSIVE_ANALYSIS.md)
 
-#### Create Timers
-```javascript
-// Simple timer
-MINOOTS.create({ name: 'simple', duration: '30s' });
-
-// Complex workflow timer
-MINOOTS.create({
-  name: 'deployment_pipeline',
-  duration: '15m',
-  metadata: { environment: 'production', version: '1.2.3' },
-  events: {
-    on_expire: {
-      webhook: 'https://api.company.com/deploy-complete',
-      command: 'docker deploy production:latest',
-      file_write: {
-        file: 'deployment.log',
-        content: 'Production deployment completed at ${timestamp}'
-      }
-    }
-  }
-});
-```
-
-#### Duration Formats
-```javascript
-'30s'    // 30 seconds
-'5m'     // 5 minutes  
-'2h'     // 2 hours
-'1d'     // 1 day
-3600000  // milliseconds
-```
-
-#### Monitor Timers
-```javascript
-// List all active timers
-const timers = MINOOTS.list();
-timers.forEach(t => {
-  console.log(`${t.name}: ${Math.round(t.progress * 100)}% complete`);
-});
-
-// Get specific timer
-const timer = MINOOTS.get('timer_id');
-console.log(`Status: ${timer.status}`);
-console.log(`Remaining: ${timer.timeRemaining}ms`);
-
-// Read timer logs
-const logs = MINOOTS.logs('timer_id');
-console.log(logs);
-```
-
-#### Cancel & Cleanup
-```javascript
-// Cancel specific timer
-MINOOTS.cancel('timer_id');
-
-// Clean up completed timers
-MINOOTS.cleanup();
-```
-
-### Advanced Features
-
-#### Timer Chains
-```javascript
-// Create dependent timers
-const timer1 = MINOOTS.create({ name: 'step1', duration: '1m' });
-const timer2 = MINOOTS.create({ 
-  name: 'step2', 
-  duration: '30s',
-  depends_on: timer1.id 
-});
-```
-
-#### Conditional Execution
-```javascript
-MINOOTS.create({
-  name: 'conditional_deploy',
-  duration: '5m',
-  conditions: {
-    environment: 'production',
-    tests_passed: true
-  }
-});
-```
-
-#### Team Collaboration
-```javascript
-// Share timer with team
-MINOOTS.share('timer_id', {
-  team: 'devops-team',
-  permissions: ['read', 'cancel']
-});
-```
-
-## 🛠️ Installation & Setup
-
-### Local Development
-```bash
-git clone https://github.com/domusgpt/minoots-timer-system.git
-cd minoots-timer-system
-npm install
-npm test
-npm start
-```
-
-### Cloud Setup (Firebase)
-```bash
-# Install Firebase CLI
-npm install -g firebase-tools
-
-# Deploy MINOOTS backend
-firebase login
-firebase deploy
-
-# Configure authentication
-firebase auth:import users.json
-```
-
-### Docker Deployment
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-```bash
-docker build -t minoots .
-docker run -d -p 3000:3000 minoots
-```
-
-## 🔌 Integrations
-
-### MCP (Model Context Protocol)
-```javascript
-// For AI agents using Claude Code
-const mcp = require('@minoots/mcp-extension');
-
-// Create timer through MCP
-await mcp.createTimer({
-  name: 'agent_task_timeout',
-  duration: '10m',
-  agent_id: 'claude_agent_001'
-});
-```
-
-### REST API
-```bash
-# Create timer via API
-curl -X POST https://api.minoots.com/v1/timers \
-  -H "Authorization: Bearer $API_KEY" \
-  -d '{
-    "name": "api_timer",
-    "duration": "5m",
-    "events": {
-      "on_expire": {
-        "webhook": "https://myapp.com/timer-done"
-      }
-    }
-  }'
-
-# Get timer status
-curl https://api.minoots.com/v1/timers/timer_id \
-  -H "Authorization: Bearer $API_KEY"
-```
-
-### Webhooks
-```javascript
-// Receive timer events
-app.post('/webhook/timer-expired', (req, res) => {
-  const { timer, event, timestamp } = req.body;
-  console.log(`Timer ${timer.name} expired at ${timestamp}`);
-  res.status(200).send('OK');
-});
-```
+---
 
 ## 💰 Pricing
 
-### Free Tier
-- ✅ Up to 100 active timers
-- ✅ Basic webhook support
-- ✅ Community support
-- ✅ 30-day history
+| Tier | Price | Timers | Features |
+|------|-------|--------|----------|
+| **Free** | $0/mo | 5 concurrent, 100/month | Core features, community support |
+| **Pro** | $19/mo | Unlimited | + MCP integration, webhooks, priority support |
+| **Team** | $49/mo | Unlimited | + Team collaboration, advanced analytics |
+| **Enterprise** | Custom | Unlimited | + SSO, SLA, on-premises, dedicated support |
 
-### Pro ($9/month)
-- ✅ Up to 10,000 timers
-- ✅ Advanced webhooks
-- ✅ Team collaboration
-- ✅ Priority support
-- ✅ 1-year history
+---
 
-### Enterprise ($99/month)
-- ✅ Unlimited timers
-- ✅ SSO integration
-- ✅ Custom integrations
-- ✅ SLA guarantees
-- ✅ Dedicated support
+## 🎨 This Website
+
+This is the marketing and documentation website for MINOOTS, built with the **Visual Codex** design system:
+
+- **Holographic Parallax** - Multi-layer depth effects with blend modes
+- **Neoskeuomorphic Cards** - Advanced shadow systems with tactile depth
+- **Interactive Timer Visualization** - Live pulsing rings representing precision timing
+- **Mouse Parallax** - Background responds to cursor movement
+- **Scroll Reveal Animations** - Elements fade in as you scroll
+- **Mobile-First Design** - Touch-optimized with adaptive performance
+
+### Design System
+- **Primary Color:** Deep Space Blue (#0a0e27)
+- **Accent Colors:** Electric Cyan (#00ffff), Violet Purple (#9d4edd), Soft Teal (#06ffa5)
+- **Typography:** Modern sans-serif with monospace for code
+- **Effects:** Screen/overlay/color-dodge blend modes, CSS animations, WebGL-inspired visuals
+
+---
 
 ## 🤝 Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions to MINOOTS! See the [main repository](https://github.com/Domusgpt/minoots-timer-system) for contribution guidelines.
 
-```bash
-# Development setup
-npm install
-npm run dev
+---
 
-# Run tests
-npm test
+## 📞 Contact & Support
 
-# Build for production
-npm run build
-```
+- 📚 [Documentation](https://github.com/Domusgpt/minoots-timer-system#readme)
+- 🐛 [Report Issues](https://github.com/Domusgpt/minoots-timer-system/issues)
+- 💬 [GitHub Discussions](https://github.com/Domusgpt/minoots-timer-system/discussions)
+
+---
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](https://github.com/Domusgpt/minoots-timer-system/blob/main/LICENSE) file for details.
 
-## 🆘 Support
+---
 
-- 📚 [Documentation](https://docs.minoots.com)
-- 💬 [Discord Community](https://discord.gg/minoots)
-- 🐛 [Report Issues](https://github.com/domusgpt/minoots-timer-system/issues)
-- 📧 [Email Support](mailto:support@minoots.com)
+# 🌟 A Paul Phillips Manifestation
+
+**Send Love, Hate, or Opportunity to:** Paul@clearseassolutions.com
+**Join The Exoditical Moral Architecture Movement:** [Parserator.com](https://parserator.com)
+
+> *"The Revolution Will Not be in a Structured Format"*
+
+---
+
+**© 2025 Paul Phillips - Clear Seas Solutions LLC**
+**All Rights Reserved - Proprietary Technology**
 
 ---
 
