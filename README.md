@@ -386,6 +386,9 @@ npm run dev
 # Run tests
 npm test
 
+# Ensure no binary assets are tracked
+npm run check:binaries
+
 # Build for production
 npm run build
 ```
