@@ -9,6 +9,7 @@
     "build": "tsc",
     "dev": "nodemon independent-timer.js",
     "lint": "eslint .",
+    "check:binaries": "node scripts/check-binaries.mjs",
     "docs": "typedoc",
     "deploy": "firebase deploy"
   },
