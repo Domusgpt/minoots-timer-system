@@ -90,6 +90,19 @@ contains runnable foundations for that architecture:
 | Action Orchestrator | `services/action-orchestrator` | Timer event consumers that trigger webhooks and stubbed agent prompts |
 | Contracts & Dev Track | `proto/timer.proto`, `docs/DEVELOPMENT_TRACK.md` | gRPC definitions and the execution plan for landing the full platform |
 
+### Phase 3 integrations
+
+- **LangChain / LlamaIndex tools** – `integrations/python/minoots_agent_tools` ships a reusable client, `AtoTimerTool`,
+  and a LlamaIndex `FunctionTool` factory so agents can schedule timers directly from workflows.
+- **GitHub Action** – `github-actions/schedule-timer` lets CI pipelines create timers with regional hints and metadata.
+- **Slack bot** – `apps/slack-bot` provides a `/ato` slash command powered by the MINOOTS control plane for human-in-the-loop coordination.
+
+### Phase 4 "Vibe Coding" marketing
+
+- **Positioning & campaigns** – `docs/marketing/VIBE_CODING_STRATEGY.md` and `docs/marketing/CAMPAIGN_ROADMAP.md` define the "Metronome for Vibe Coding" narrative, KPIs, and 90-day launch programs.
+- **Content engine** – `docs/marketing/CONTENT_CALENDAR.md` plus ready-to-ship assets in `docs/marketing/assets/` cover the hero blog, newsletter, and social snippets.
+- **Community & activation** – `docs/marketing/COMMUNITY_RUNBOOK.md` and `docs/marketing/PHASE3_ACTIVATION_PLAN.md` detail Discord/Reddit engagement, integration office hours, and measurement loops to convert interest into usage.
+
 ### Local development stack
 1. Install dependencies:
    - `cd apps/control-plane && npm install`
