@@ -1,0 +1,39 @@
+pipeline {
+  agent any
+
+  environment {
+    MINOOTS_API_KEY = credentials('minoots-api-key')
+    MINOOTS_API_BASE = credentials('minoots-api-base')
+  }
+
+  stages {
+    stage('Install CLI') {
+      steps {
+        sh 'npm install minoots-sdk'
+      }
+    }
+
+    stage('Start Timer') {
+      steps {
+        sh 'npx minoots timers create --team $MINOOTS_TEAM --name "${JOB_NAME}" --duration "${MINOOTS_DURATION:-15m}" --metadata build=$BUILD_NUMBER'
+      }
+    }
+
+    stage('Wait for Completion') {
+      steps {
+        sh 'npx minoots timers wait --team $MINOOTS_TEAM --timer $(cat .minoots/timer-id)'
+      }
+    }
+  }
+
+  post {
+    always {
+      script {
+        if (fileExists('.minoots/timer-status.json')) {
+          def result = readJSON file: '.minoots/timer-status.json'
+          echo "MINOOTS Timer ${result.id ?: ''} finished with ${result.status ?: 'unknown'}"
+        }
+      }
+    }
+  }
+}

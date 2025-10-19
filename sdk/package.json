@@ -3,9 +3,20 @@
   "version": "1.0.0",
   "description": "Official Node.js SDK for MINOOTS Independent Timer System",
   "main": "minoots-sdk.js",
+  "types": "minoots-sdk.d.ts",
+  "sideEffects": false,
+  "files": [
+    "README.md",
+    "minoots-sdk.js",
+    "minoots-sdk.d.ts",
+    "cli",
+    "examples",
+    "test"
+  ],
   "scripts": {
     "test": "node test/sdk-test.js",
-    "example": "node examples/basic-usage.js"
+    "example": "node examples/basic-usage.js",
+    "cli": "node cli/minoots-cli.js --help"
   },
   "keywords": [
     "timer",
@@ -18,10 +29,10 @@
   ],
   "author": "Paul Phillips <phillips.paul.email@gmail.com>",
   "license": "PROPRIETARY",
-  "dependencies": {},
-  "peerDependencies": {
-    "node-fetch": "^3.0.0"
+  "bin": {
+    "minoots": "cli/minoots-cli.js"
   },
+  "dependencies": {},
   "engines": {
     "node": ">=18.0.0"
   },

@@ -1,0 +1,44 @@
+name: MINOOTS Timer Orchestration
+
+on:
+  workflow_call:
+    inputs:
+      team_id:
+        required: true
+        type: string
+      timer_name:
+        required: true
+        type: string
+      duration:
+        required: true
+        type: string
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    env:
+      MINOOTS_API_KEY: ${{ secrets.MINOOTS_API_KEY }}
+      MINOOTS_API_BASE: ${{ vars.MINOOTS_API_BASE || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MINOOTS SDK
+        run: npm install minoots-sdk
+
+      - name: Start timer
+        id: start
+        run: |
+          npx minoots timers create --team "${{ inputs.team_id }}" --name "${{ inputs.timer_name }}" --duration "${{ inputs.duration }}" --metadata workflow=${{ github.workflow }} --metadata run=${{ github.run_id }}
+
+      - name: Wait for completion
+        run: |
+          npx minoots timers wait --team "${{ inputs.team_id }}" --timer "$(cat .minoots/timer-id)"
+
+      - name: Summarize timer run
+        if: always()
+        run: |
+          RESULT=$(cat .minoots/timer-status.json)
+          echo "### MINOOTS Timer" >> $GITHUB_STEP_SUMMARY
+          echo "Timer ID: $(jq -r .timerId <<< "$RESULT")" >> $GITHUB_STEP_SUMMARY
+          echo "Status: $(jq -r .status <<< "$RESULT")" >> $GITHUB_STEP_SUMMARY
+          echo "Elapsed: $(jq -r .elapsed <<< "$RESULT")" >> $GITHUB_STEP_SUMMARY

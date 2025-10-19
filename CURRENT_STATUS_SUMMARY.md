@@ -28,6 +28,51 @@
 - **Node.js SDK** - Complete SDK with examples and tests
 - **API Documentation** - Comprehensive docs and Postman collection
 
+### 🧰 Phase 3 Tooling Boost (2025-11-03)
+- Node SDK now ships resilient retry/backoff helpers with lifecycle hooks for instrumentation.
+- React (`sdk/react/useMinootsTimer.ts`) and Vue (`sdk/vue/useMinootsTimer.ts`) bindings unblock dashboard workstreams.
+- Python SDK adds LangChain `AtoTimerTool` and LlamaIndex helpers with optional dependencies for agent stacks.
+- Respx-backed pytest harness validates the async Python client offline, covering happy paths, API errors, and timeout handling.
+- GitHub Action (`.github/actions/minoots-timer`) and Slack `/ato` command reference integration accelerate ops automation.
+
+### 🛡️ Phase 4 Foundations Ignited
+- Firestore rules, Express middleware, and new `/teams` endpoints deliver working organization + RBAC scaffolding.
+- Timer APIs enforce team membership—anonymous access now restricted to personal timers only.
+- Team management utilities (`functions/utils/teamService.js`) centralize invites, role changes, and membership lists.
+- Invitation lifecycle endpoints + Stripe team billing linkage let owners issue tokens, accept invites, and attach subscription metadata to teams.
+
+### 🧱 Phase 4 Enterprise Feature Suite (2025-11-04)
+- Collaboration mode ships with `/teams/:teamId/shared-timers` APIs, collaborator role controls, and Firestore guardrails so editors can co-manage timers safely.
+- `/teams/:teamId/analytics/*` endpoints surface usage summaries, timer history, and active snapshots for the upcoming admin dashboard.
+- Full billing console: owners can record metered usage, list invoices, rotate payment methods, trigger trials, and apply promotions directly via the API.
+- SSO providers (OIDC + SAML) can be configured per team with public assertion endpoint issuing Firebase custom tokens and auto-provisioning memberships.
+- Timer templates, cron schedules, dependency unlocking, conditional execution, retry backoff, and worker assignments unlock the entire Phase 4 advanced timer backlog.
+- `runScheduledTimers` Cloud Function materializes cron definitions, while metrics logging tracks drift/webhook latency for performance reviews.
+
+### 🖥️ Phase 5 Interface Launch (2025-11-05)
+- Web control center (`apps/dashboard`) delivers live timer monitoring, analytics, team management, billing, integrations, and ops runbooks with offline mocks.
+- Tailwind + React Query provider streams events, exposes creation wizard, and syncs enterprise data in real time.
+- Expo mobile companion (`apps/mobile`) mirrors core insights with timer progress cards, analytics sparklines, and quick action shortcuts.
+
+### ♻️ Phase 5 Parserator Reliability Hardening (2025-11-06)
+- Firebase functions now return cascade deletion metrics and persist audit docs in `timer_deletion_metrics` when timers are purged.
+- Replay queue (`timer_replay_queue`) with scheduled handlers (`parseratorReplaySweep`, `parseratorReplayHousekeeping`) rehydrates failed webhook runs and clears stale entries.
+- `functions/test/parserator-harness.test.js` supplies a node:test Firestore fake that validates webhook payloads, replay sweeps, cleanup, and scheduler hooks offline.
+- Node/Python SDKs expose `replayTimer()` and surface deletion cascade counts alongside new Firestore index guidance for replay operations.
+
+### 🔌 Phase 6 Integrations Launch (2025-11-07)
+- `/teams/:teamId/webhooks` endpoints add CRUD, templating, delivery queue processing, signature verification, and replay-safe monitoring logs with scheduled `processWebhookQueue` sweeps.
+- Templates cover Slack, Discord, and Teams payloads while React/Vue dashboards can publish custom events or run live connectivity tests straight from the UI.
+- Integration config service stores secrets per team and now delivers Slack, Discord, Teams, Telegram, SendGrid email, Twilio SMS, and Twilio Voice notifications with masked previews to keep binaries out of git.
+- Node and Python SDKs gained first-class helpers for managing webhooks/integrations so agents and dashboards can configure hooks without hand-crafted fetch calls.
+- Offline node:test suites (`webhook-system.test.js`, `integrations-config.test.js`) and respx-backed pytest coverage validate queue retries, signature checks, and Twilio payload shaping without hitting external services.
+
+### 🧩 Phase 7 Developer Experience Acceleration (2025-11-08)
+- `minoots` CLI bundles timer orchestration, webhook lifecycle, and integration configuration commands with filesystem state drops for CI pipelines.
+- GitHub Actions, GitLab CI, Jenkins, and Terraform adapters demonstrate how to wire the CLI into automation stacks without custom REST code.
+- VS Code extension scaffolding adds quick-create commands while an Electron desktop shell introduces tray shortcuts and readies push notification plumbing.
+- SDK documentation and tests now cover the CLI flows, ensuring offline contributors can validate commands end-to-end.
+
 ## 🎯 BUSINESS MODEL LOCKED IN
 
 ### Pricing Strategy:
@@ -76,25 +121,20 @@ curl https://api-m3waemr5lq-uc.a.run.app/pricing
 
 ## 🚧 WHAT NEEDS IMMEDIATE ATTENTION
 
-### 1. Stripe Configuration (30 minutes)
-```bash
-# Set environment variables
-firebase functions:config:set \
-  stripe.secret_key="sk_live_..." \
-  stripe.webhook_secret="whsec_..." \
-  stripe.price_pro_monthly="price_..." \
-  stripe.price_team_monthly="price_..."
-```
+### 1. Analytics & Monitoring Foundations (4 hours)
+- Wire timer metrics into BigQuery, define health alert thresholds, and publish Grafana dashboards for ops visibility.
+- Introduce smoke tests for webhook retry queue throughput.
 
-### 2. User Registration Flow (2 hours)
-- Simple Firebase Auth signup form
-- Email verification
-- API key generation on first login
+### 2. Desktop & Push Enhancements (4 hours)
+- Layer push notification scaffolding onto the Expo app and connect native OS notifications to the Electron tray shell.
+- Scope widget/Watch companions now that SMS/voice notifications exist.
 
-### 3. Basic Web Dashboard (4 hours)
-- React app showing user's timers
-- API key management interface
-- Upgrade to Pro button
+### 3. Credential Ops Hardening (2 hours)
+- Add secret rotation helpers + audit logs for stored integration credentials and document Twilio/SendGrid onboarding in the runbooks.
+
+### 4. Developer Tool Polishing (2 hours)
+- Expand CLI coverage with timer cancellation and analytics exports.
+- Publish automated smoke tests or example repos for each CI adapter.
 
 ## 🎯 LAUNCH READINESS CHECKLIST
 
@@ -172,4 +212,4 @@ firebase functions:config:set \
 
 ---
 
-*Last updated: 2025-07-13 - System is live and ready for launch*
+*Last updated: 2025-11-05 - Phase 5 interfaces live across web and mobile*
