@@ -19,6 +19,7 @@ export interface AuthContext {
   quota: QuotaPolicy;
   traceId?: string;
   apiKeyId?: string;
+  preferredRegion?: string;
 }
 
 export interface AuthenticatedRequest extends Request {

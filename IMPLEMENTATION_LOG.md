@@ -169,6 +169,39 @@
 
 ---
 
+### Entry #7: Phase 2 close-out – Multi-region gateway + DLQ verification - COMPLETE
+**Time:** 2025-10-27 08:30-11:00 UTC
+**Task:** Finish the remaining Phase 2 reliability work by adding regional failover to the control plane and validating the NATS dead-letter queue tooling.
+**Status:** ✅ COMPLETE
+
+**Actions:**
+1. Added a multi-region kernel gateway that fans requests across `KERNEL_REGION_TARGETS`, injects `minoots.io/region` labels, and falls back when the primary replica rejects traffic.
+2. Exposed region hints through authentication headers and timer labels so SDKs, GitHub Actions, and Slack can target specific replicas.
+3. Updated the local environment guide and `.env.example` to document the new configuration knobs.
+4. Hardened dead-letter queue publishing with logging and ensured failure paths surface through the orchestration metrics.
+
+**Next Steps:**
+- Expand integration coverage so multi-region scenarios and DLQ replay run inside CI once the chaos harness lands.
+
+---
+
+### Entry #8: Phase 3 delivery – Agent toolkit & collaboration surface - COMPLETE
+**Time:** 2025-10-27 11:00-15:30 UTC
+**Task:** Ship the Phase 3 “Timer as a Tool” deliverables: LangChain + LlamaIndex connectors, GitHub Action, and Slack surface.
+**Status:** ✅ COMPLETE
+
+**Actions:**
+1. Published a `minoots-agent-tools` Python package with a reusable `MinootsClient`, `AtoTimerTool` for LangChain, and a LlamaIndex `FunctionTool` factory.
+2. Created a zero-dependency GitHub Action (`github-actions/schedule-timer`) so CI pipelines can schedule follow-up timers with regional hints.
+3. Built a Bolt-based Slack app exposing `/ato`, parsing CLI-style flags, and forwarding requests to the control plane with metadata and labels.
+4. Documented usage in the integrations README files and wired region propagation through every surface.
+
+**Next Steps:**
+- Add contract tests for each connector once sandbox environments are available.
+- Coordinate with marketing to announce the new integrations to early adopters.
+
+---
+
 ## 🔧 TECHNICAL DECISIONS
 
 ### Authentication Strategy

@@ -90,6 +90,13 @@ contains runnable foundations for that architecture:
 | Action Orchestrator | `services/action-orchestrator` | Timer event consumers that trigger webhooks and stubbed agent prompts |
 | Contracts & Dev Track | `proto/timer.proto`, `docs/DEVELOPMENT_TRACK.md` | gRPC definitions and the execution plan for landing the full platform |
 
+### Phase 3 integrations
+
+- **LangChain / LlamaIndex tools** – `integrations/python/minoots_agent_tools` ships a reusable client, `AtoTimerTool`,
+  and a LlamaIndex `FunctionTool` factory so agents can schedule timers directly from workflows.
+- **GitHub Action** – `github-actions/schedule-timer` lets CI pipelines create timers with regional hints and metadata.
+- **Slack bot** – `apps/slack-bot` provides a `/ato` slash command powered by the MINOOTS control plane for human-in-the-loop coordination.
+
 ### Local development stack
 1. Install dependencies:
    - `cd apps/control-plane && npm install`
