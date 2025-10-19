@@ -28,6 +28,38 @@
 - **Node.js SDK** - Complete SDK with examples and tests
 - **API Documentation** - Comprehensive docs and Postman collection
 
+### 🧰 Phase 3 Tooling Boost (2025-11-03)
+- Node SDK now ships resilient retry/backoff helpers with lifecycle hooks for instrumentation.
+- React (`sdk/react/useMinootsTimer.ts`) and Vue (`sdk/vue/useMinootsTimer.ts`) bindings unblock dashboard workstreams.
+- Python SDK adds LangChain `AtoTimerTool` and LlamaIndex helpers with optional dependencies for agent stacks.
+- Respx-backed pytest harness validates the async Python client offline, covering happy paths, API errors, and timeout handling.
+- GitHub Action (`.github/actions/minoots-timer`) and Slack `/ato` command reference integration accelerate ops automation.
+
+### 🛡️ Phase 4 Foundations Ignited
+- Firestore rules, Express middleware, and new `/teams` endpoints deliver working organization + RBAC scaffolding.
+- Timer APIs enforce team membership—anonymous access now restricted to personal timers only.
+- Team management utilities (`functions/utils/teamService.js`) centralize invites, role changes, and membership lists.
+- Invitation lifecycle endpoints + Stripe team billing linkage let owners issue tokens, accept invites, and attach subscription metadata to teams.
+
+### 🧱 Phase 4 Enterprise Feature Suite (2025-11-04)
+- Collaboration mode ships with `/teams/:teamId/shared-timers` APIs, collaborator role controls, and Firestore guardrails so editors can co-manage timers safely.
+- `/teams/:teamId/analytics/*` endpoints surface usage summaries, timer history, and active snapshots for the upcoming admin dashboard.
+- Full billing console: owners can record metered usage, list invoices, rotate payment methods, trigger trials, and apply promotions directly via the API.
+- SSO providers (OIDC + SAML) can be configured per team with public assertion endpoint issuing Firebase custom tokens and auto-provisioning memberships.
+- Timer templates, cron schedules, dependency unlocking, conditional execution, retry backoff, and worker assignments unlock the entire Phase 4 advanced timer backlog.
+- `runScheduledTimers` Cloud Function materializes cron definitions, while metrics logging tracks drift/webhook latency for performance reviews.
+
+### 🖥️ Phase 5 Interface Launch (2025-11-05)
+- Web control center (`apps/dashboard`) delivers live timer monitoring, analytics, team management, billing, integrations, and ops runbooks with offline mocks.
+- Tailwind + React Query provider streams events, exposes creation wizard, and syncs enterprise data in real time.
+- Expo mobile companion (`apps/mobile`) mirrors core insights with timer progress cards, analytics sparklines, and quick action shortcuts.
+
+### ♻️ Phase 5 Parserator Reliability Hardening (2025-11-06)
+- Firebase functions now return cascade deletion metrics and persist audit docs in `timer_deletion_metrics` when timers are purged.
+- Replay queue (`timer_replay_queue`) with scheduled handlers (`parseratorReplaySweep`, `parseratorReplayHousekeeping`) rehydrates failed webhook runs and clears stale entries.
+- `functions/test/parserator-harness.test.js` supplies a node:test Firestore fake that validates webhook payloads, replay sweeps, cleanup, and scheduler hooks offline.
+- Node/Python SDKs expose `replayTimer()` and surface deletion cascade counts alongside new Firestore index guidance for replay operations.
+
 ## 🎯 BUSINESS MODEL LOCKED IN
 
 ### Pricing Strategy:
@@ -76,25 +108,21 @@ curl https://api-m3waemr5lq-uc.a.run.app/pricing
 
 ## 🚧 WHAT NEEDS IMMEDIATE ATTENTION
 
-### 1. Stripe Configuration (30 minutes)
-```bash
-# Set environment variables
-firebase functions:config:set \
-  stripe.secret_key="sk_live_..." \
-  stripe.webhook_secret="whsec_..." \
-  stripe.price_pro_monthly="price_..." \
-  stripe.price_team_monthly="price_..."
-```
+### 1. Wire Dashboard to Live APIs (4 hours)
+- Replace mock adapters with production control plane endpoints and add authenticated session hand-offs.
+- Capture errors/latency metrics and surface stream degradation banners.
 
-### 2. User Registration Flow (2 hours)
-- Simple Firebase Auth signup form
-- Email verification
-- API key generation on first login
+### 2. Mobile Sync & Notifications (3 hours)
+- Bridge Expo app to the SDK, add auth context, and configure push notification scaffolding.
+- Align analytics sparkline with backend metrics sampling cadence.
 
-### 3. Basic Web Dashboard (4 hours)
-- React app showing user's timers
-- API key management interface
-- Upgrade to Pro button
+### 3. QA & Accessibility Polish (4 hours)
+- Add Playwright smoke tests and automated a11y checks for the web dashboard.
+- Validate React Native layouts across dark/light modes and small devices.
+
+### 4. Firestore Index Deployment (1 hour)
+- Import the new `timer_replay_queue` composite indexes (`status+enqueuedAt`, `status+processedAt`) to support replay sweeps.
+- Verify production projects deny client access to `timer_replay_queue` and `timer_deletion_metrics` per the updated rules.
 
 ## 🎯 LAUNCH READINESS CHECKLIST
 
@@ -172,4 +200,4 @@ firebase functions:config:set \
 
 ---
 
-*Last updated: 2025-07-13 - System is live and ready for launch*
+*Last updated: 2025-11-05 - Phase 5 interfaces live across web and mobile*
