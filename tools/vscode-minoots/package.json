@@ -1,0 +1,61 @@
+{
+  "name": "vscode-minoots",
+  "displayName": "MINOOTS Timer Assistant",
+  "publisher": "minoots",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:minoots.createTimer",
+    "onCommand:minoots.openDashboard"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "minoots.createTimer",
+        "title": "MINOOTS: Create Timer"
+      },
+      {
+        "command": "minoots.openDashboard",
+        "title": "MINOOTS: Open Dashboard"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "MINOOTS",
+      "properties": {
+        "minoots.apiKey": {
+          "type": "string",
+          "markdownDescription": "API key used to authenticate with MINOOTS.",
+          "scope": "application"
+        },
+        "minoots.team": {
+          "type": "string",
+          "markdownDescription": "Default team identifier for timer creation.",
+          "scope": "application"
+        },
+        "minoots.apiBase": {
+          "type": "string",
+          "markdownDescription": "Override the API base URL.",
+          "default": "https://api-m3waemr5lq-uc.a.run.app",
+          "scope": "application"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ."
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

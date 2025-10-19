@@ -1,0 +1,16 @@
+stages:
+  - orchestrate
+
+variables:
+  MINOOTS_API_KEY: "$MINOOTS_API_KEY"
+  MINOOTS_API_BASE: "$MINOOTS_API_BASE"
+
+orchestrate:
+  stage: orchestrate
+  image: node:20
+  script:
+    - npm install minoots-sdk
+    - npx minoots timers create --team "$MINOOTS_TEAM" --name "$CI_JOB_NAME" --duration "${TIMER_DURATION:-10m}" --metadata pipeline=$CI_PIPELINE_ID --metadata job=$CI_JOB_ID
+    - export MINOOTS_TIMER_ID=$(cat .minoots/timer-id)
+    - npx minoots timers wait --team "$MINOOTS_TEAM" --timer "$MINOOTS_TIMER_ID"
+    - cat .minoots/timer-status.json

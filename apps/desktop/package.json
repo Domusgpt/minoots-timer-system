@@ -1,0 +1,12 @@
+{
+  "name": "minoots-desktop",
+  "version": "0.1.0",
+  "description": "Electron shell for the MINOOTS timer dashboard",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^28.2.0"
+  }
+}
