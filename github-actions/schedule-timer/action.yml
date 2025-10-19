@@ -1,0 +1,58 @@
+name: "Schedule MINOOTS timer"
+description: "Create a durable timer via the MINOOTS control plane"
+author: "MINOOTS Engineering"
+runs:
+  using: "node20"
+  main: "dist/index.js"
+inputs:
+  api-base-url:
+    description: "Base URL for the MINOOTS control plane"
+    default: "https://api.minoots.com"
+  api-key:
+    description: "Tenant API key with timer.write permissions"
+    required: true
+  tenant-id:
+    description: "Tenant identifier associated with the API key"
+    required: true
+  requested-by:
+    description: "Identifier recorded in the timer audit trail"
+    default: "github-action"
+  duration:
+    description: "Timer duration (e.g. 15m). Provide duration or fire-at"
+    required: false
+  fire-at:
+    description: "Absolute ISO timestamp when the timer should fire"
+    required: false
+  name:
+    description: "Friendly timer name"
+    default: "github-timer"
+  metadata:
+    description: "JSON metadata payload"
+    required: false
+  labels:
+    description: "JSON object of string labels"
+    required: false
+  action-bundle:
+    description: "JSON action bundle definition"
+    required: false
+  agent-binding:
+    description: "JSON agent binding payload"
+    required: false
+  region:
+    description: "Preferred kernel region for the timer"
+    required: false
+  timeout-seconds:
+    description: "HTTP timeout for the API call"
+    default: "10"
+outputs:
+  timer-id:
+    description: "Identifier of the scheduled timer"
+  fire-at:
+    description: "ISO timestamp when the timer will fire"
+  region:
+    description: "Region used for scheduling"
+  response-json:
+    description: "Raw JSON response from the MINOOTS control plane"
+branding:
+  icon: "clock"
+  color: "purple"
