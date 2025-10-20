@@ -2,6 +2,12 @@ import { buildSignedHeaders } from '../policy/authenticator';
 import { QuotaExceededError, QuotaManager } from '../policy/quotaManager';
 import { AuthContext } from '../policy/types';
 import { TimerCancelInput, TimerCreateInput, TimerRecord } from '../types/timer';
+import {
+  applyEcosystemLabels,
+  embedEcosystemIntoMetadata,
+  mergeEcosystem,
+  readEcosystemFromMetadata,
+} from '../types/ecosystem';
 import { computeFireTimestamp, parseDurationMs } from '../utils/duration';
 import {
   KernelEventStream,
@@ -25,6 +31,15 @@ export class TimerService {
       ? parseDurationMs(input.duration)
       : this.durationFromFireAt(input.fireAt!, now);
 
+    const baseMetadata = cloneNullable(input.metadata);
+    const existingEcosystem = readEcosystemFromMetadata(baseMetadata);
+    const ecosystem = mergeEcosystem(existingEcosystem, input.ecosystem);
+    const metadata = embedEcosystemIntoMetadata(baseMetadata, ecosystem);
+
+    const labels = input.labels ? { ...input.labels } : {};
+    applyEcosystemLabels(labels, ecosystem);
+    const labelPayload = Object.keys(labels).length > 0 ? labels : undefined;
+
     const fireAt = computeFireTimestamp(durationMs, now);
     const scheduleCommand: TimerScheduleCommand = {
       tenantId: input.tenantId,
@@ -32,8 +47,8 @@ export class TimerService {
       name: input.name ?? `timer_${now.getTime()}`,
       durationMs,
       fireAt,
-      metadata: cloneNullable(input.metadata),
-      labels: input.labels ? { ...input.labels } : {},
+      metadata,
+      labels: labelPayload,
       actionBundle: cloneNullable(input.actionBundle),
       agentBinding: cloneNullable(input.agentBinding),
     };
@@ -93,11 +108,15 @@ export class TimerService {
   }
 
   private toGatewayContext(context: AuthContext): KernelGatewayContext {
+    const headers = buildSignedHeaders(context);
+    if (context.preferredRegion) {
+      headers['x-minoots-region'] = context.preferredRegion;
+    }
     return {
       tenantId: context.tenantId,
       principalId: context.principalId,
       traceId: context.traceId,
-      headers: buildSignedHeaders(context),
+      headers,
     };
   }
 }
