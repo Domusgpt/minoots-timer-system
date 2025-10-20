@@ -93,11 +93,15 @@ export class TimerService {
   }
 
   private toGatewayContext(context: AuthContext): KernelGatewayContext {
+    const headers = buildSignedHeaders(context);
+    if (context.preferredRegion) {
+      headers['x-minoots-region'] = context.preferredRegion;
+    }
     return {
       tenantId: context.tenantId,
       principalId: context.principalId,
       traceId: context.traceId,
-      headers: buildSignedHeaders(context),
+      headers,
     };
   }
 }

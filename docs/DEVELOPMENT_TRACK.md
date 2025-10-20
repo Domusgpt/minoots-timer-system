@@ -77,6 +77,7 @@ Each of these deliverables includes inline documentation and starter scripts so 
 - Implement persistence + replication modules in the horology kernel to store timer logs durably.
 - Connect the action orchestrator to managed NATS JetStream (or Kafka) and add templated agent bridge commands.
 - Publish updated SDKs that target the new control plane endpoints and event stream, replacing direct file-system timers.
+- Promote the LangChain/LlamaIndex toolkits, GitHub Action, and Slack bot released in Phase 3 so early adopters can exercise the multi-region stack.
 
 This track ensures the architecture ships as a cohesive product rather than a static plan—giving agents, users, and developers
 an immediately useful foundation to build on.
