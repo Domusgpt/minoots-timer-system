@@ -169,6 +169,61 @@
 
 ---
 
+### Entry #7: Phase 2 close-out – Multi-region gateway + DLQ verification - COMPLETE
+**Time:** 2025-10-27 08:30-11:00 UTC
+**Task:** Finish the remaining Phase 2 reliability work by adding regional failover to the control plane and validating the NATS dead-letter queue tooling.
+**Status:** ✅ COMPLETE
+
+**Actions:**
+1. Added a multi-region kernel gateway that fans requests across `KERNEL_REGION_TARGETS`, injects `minoots.io/region` labels, and falls back when the primary replica rejects traffic.
+2. Exposed region hints through authentication headers and timer labels so SDKs, GitHub Actions, and Slack can target specific replicas.
+3. Updated the local environment guide and `.env.example` to document the new configuration knobs.
+4. Hardened dead-letter queue publishing with logging and ensured failure paths surface through the orchestration metrics.
+
+**Next Steps:**
+- Expand integration coverage so multi-region scenarios and DLQ replay run inside CI once the chaos harness lands.
+
+---
+
+### Entry #8: Phase 3 delivery – Agent toolkit & collaboration surface - COMPLETE
+**Time:** 2025-10-27 11:00-15:30 UTC
+**Task:** Ship the Phase 3 “Timer as a Tool” deliverables: LangChain + LlamaIndex connectors, GitHub Action, and Slack surface.
+**Status:** ✅ COMPLETE
+
+**Actions:**
+1. Published a `minoots-agent-tools` Python package with a reusable `MinootsClient`, `AtoTimerTool` for LangChain, and a LlamaIndex `FunctionTool` factory.
+2. Created a zero-dependency GitHub Action (`github-actions/schedule-timer`) so CI pipelines can schedule follow-up timers with regional hints.
+3. Built a Bolt-based Slack app exposing `/ato`, parsing CLI-style flags, and forwarding requests to the control plane with metadata and labels.
+4. Documented usage in the integrations README files and wired region propagation through every surface.
+
+**Next Steps:**
+- Add contract tests for each connector once sandbox environments are available.
+
+### Entry #9: Phase 4 launch – "Vibe Coding" go-to-market system - COMPLETE
+**Time:** 2025-10-27 15:30-18:00 UTC
+**Task:** Deliver the Phase 4 marketing narrative, GTM engine, and community operations playbooks.
+**Status:** ✅ COMPLETE
+
+**Actions:**
+1. Authored the `docs/marketing/VIBE_CODING_GO_TO_MARKET.md` playbook covering positioning, funnel programs, and instrumentation targets for the first 60 days.
+2. Published an asset backlog enumerating launch-critical content, lifecycle nurture flows, thought-leadership deliverables, and measurement templates.
+3. Drafted community guidelines that specify Discord/Reddit structure, staffing rotation, moderation workflow, and contributor pathways to keep the vibe coding collective healthy.
+4. Highlighted the Phase 4 deliverables in the repository README so downstream teams discover the GTM resources alongside the Phase 3 integrations.
+5. Added regression tests for the `minoots-agent-tools` Python client to verify region propagation and header shaping promised during the Phase 3 rollout.
+
+**Artifacts:**
+- Go-to-market playbook: `docs/marketing/VIBE_CODING_GO_TO_MARKET.md`
+- Asset backlog: `docs/marketing/assets/ASSET_BACKLOG.md`
+- Community guidelines: `docs/marketing/community_guidelines.md`
+- Python client tests: `integrations/python/minoots_agent_tools/tests/test_client.py`
+
+**Next Steps:**
+- Produce the newsletter landing page and convert the asset backlog into tracked issues.
+- Stand up analytics events (`marketing.install`, `timer.labeled.region`) before inviting the beta cohort.
+- Coordinate with marketing to announce the new integrations to early adopters.
+
+---
+
 ## 🔧 TECHNICAL DECISIONS
 
 ### Authentication Strategy
@@ -412,3 +467,31 @@ Next update due: After auth implementation complete
 **Tests Performed:**
 - ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml --tests`
 - ✅ `npm --prefix apps/control-plane test`
+
+### Entry #15: Phase 4 ecosystem alignment - COMPLETED
+**Time:** 2025-10-27 07:55-09:10 UTC
+**Task:** Thread MINOOTS Phase 4 launch assets into the broader Parserator, Reposiologist, Nimbus Guardian, and Clear Seas Solutions portfolio narrative.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Expanded the go-to-market playbook with an ecosystem alignment section that choreographs Parserator parsing accuracy, Reposiologist repository sweeps, and Nimbus Guardian deployment safeguards into MINOOTS timer cadences.
+2. Updated the asset backlog, community guidelines, and README callouts so launch content, moderation rituals, and frontline messaging cross-promote the portfolio and surface Clear Seas Solutions as the curating consultancy.
+3. Added nurture and onboarding hooks that explicitly chain "Parse → Plan → Ship" workflows, encouraging teams to activate multiple products during vibe coding campaigns.
+
+**Tests Performed:**
+- ℹ️ Documentation-only change; no automated tests were run.
+
+### Entry #16: Ecosystem metadata handshake & choreography - COMPLETED
+**Time:** 2025-10-28 06:40-09:05 UTC
+**Task:** Wire Parserator, Reposiologist, Nimbus Guardian, and Clear Seas Solutions context directly into timers and community programs using the ecosystem payload and study of each product site.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Added an `ecosystem` schema to the control plane so timers can persist Parserator workspace IDs, Reposiologist sweep cadences, Nimbus Guardian policy gates, and Clear Seas engagement details while auto-labeling records for analytics.
+2. Updated the Slack `/ato` command, Python client, LangChain/LlamaIndex helpers, and README documentation to accept the new payload and highlight concrete flows lifted from https://parserator.com, https://reposiologist-beta.web.app, https://nimbus-guardian.web.app, and https://domusgpt.github.io/ClearSeas-Enhanced/.
+3. Expanded the go-to-market playbook, asset backlog, community rituals, and created a portfolio operating model doc so marketing and success teams can run Parse → Plan → Ship clinics that blend all soft-launched products.
+
+**Tests Performed:**
+- ✅ `npm --prefix apps/control-plane test`
+- ✅ `python integrations/python/minoots_agent_tools/tests/test_client.py`
+- ✅ `python -m compileall integrations/python/minoots_agent_tools`

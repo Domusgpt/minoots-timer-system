@@ -110,6 +110,21 @@ Wave 1 adds two leadership paths so the kernel can run in both lightweight and
    leadership updates through the shared `LeaderHandle`, enabling the control plane to forward timer commands only to the active
    leader.
 
+### 4.3 Multi-region gateway targeting
+
+The control plane can now fan requests across multiple kernel regions. Populate `KERNEL_REGION_TARGETS`
+with a comma-separated list (or JSON object) of `region=address` entries and set `KERNEL_PRIMARY_REGION`
+to the preferred default.
+
+```
+export KERNEL_REGION_TARGETS=us-east=localhost:50051,eu-west=localhost:50052
+export KERNEL_PRIMARY_REGION=us-east
+```
+
+When multi-region mode is enabled the gateway automatically adds the `minoots.io/region` label to scheduled
+timers and will fail over to secondary regions if the primary replica is unavailable. Clients can override
+the target region with the `x-minoots-region` header or by adding the label directly to timer definitions.
+
 ## 5. Running the action orchestrator
 With JetStream available, the orchestrator automatically consumes from the durable consumer and publishes to the DLQ on failures:
 
@@ -296,3 +311,28 @@ curl -X POST "http://localhost:4000/timers" \
 
 The orchestrator logs each bus milestone (dispatch, connector routing, acknowledgement)
 and the timer stream exposes the acknowledgement metadata for downstream consumers.
+
+## 13. Ecosystem metadata smoke test
+
+The control plane now accepts an `ecosystem` payload that mirrors the Parserator, Reposiologist, Nimbus Guardian, and Clear Seas Solutions products. Run this curl snippet to persist a fully linked timer and inspect the resulting labels:
+
+```bash
+curl -X POST http://localhost:4000/timers \
+  -H 'x-api-key: local-dev-key' \
+  -H 'content-type: application/json' \
+  -d '{
+        "tenantId": "tenant-local",
+        "requestedBy": "dev:ecosystem",
+        "duration": "15m",
+        "ecosystem": {
+          "parserator": {"workspaceId": "parserator-west", "datasetId": "beta-contacts"},
+          "reposiologist": {"repositoryUrl": "https://github.com/domusgpt/minoots-timer-system", "sweepCadence": "weekly"},
+          "nimbusGuardian": {"policyId": "guardian-local-gate", "environment": "staging"},
+          "clearSeas": {"engagementId": "cse-lab", "serviceTier": "pilot"},
+          "sharedNarrative": "Local Parse → Plan → Ship rehearsal",
+          "nextSyncIso": "2025-11-01T17:00:00Z"
+        }
+      }'
+```
+
+Fetch the timer via `GET /timers` and confirm `metadata.ecosystem` plus labels such as `ecosystem.parserator/dataset` and `ecosystem.nimbusGuardian/policy` are populated. These labels mirror highlights from https://parserator.com, https://reposiologist-beta.web.app, https://nimbus-guardian.web.app, and https://domusgpt.github.io/ClearSeas-Enhanced/, letting analytics and GTM teams trace cross-product flows.
