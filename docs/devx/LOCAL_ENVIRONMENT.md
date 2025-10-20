@@ -110,6 +110,21 @@ Wave 1 adds two leadership paths so the kernel can run in both lightweight and
    leadership updates through the shared `LeaderHandle`, enabling the control plane to forward timer commands only to the active
    leader.
 
+### 4.3 Multi-region gateway targeting
+
+The control plane can now fan requests across multiple kernel regions. Populate `KERNEL_REGION_TARGETS`
+with a comma-separated list (or JSON object) of `region=address` entries and set `KERNEL_PRIMARY_REGION`
+to the preferred default.
+
+```
+export KERNEL_REGION_TARGETS=us-east=localhost:50051,eu-west=localhost:50052
+export KERNEL_PRIMARY_REGION=us-east
+```
+
+When multi-region mode is enabled the gateway automatically adds the `minoots.io/region` label to scheduled
+timers and will fail over to secondary regions if the primary replica is unavailable. Clients can override
+the target region with the `x-minoots-region` header or by adding the label directly to timer definitions.
+
 ## 5. Running the action orchestrator
 With JetStream available, the orchestrator automatically consumes from the durable consumer and publishes to the DLQ on failures:
 

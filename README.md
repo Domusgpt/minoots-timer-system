@@ -90,6 +90,20 @@ contains runnable foundations for that architecture:
 | Action Orchestrator | `services/action-orchestrator` | Timer event consumers that trigger webhooks and stubbed agent prompts |
 | Contracts & Dev Track | `proto/timer.proto`, `docs/DEVELOPMENT_TRACK.md` | gRPC definitions and the execution plan for landing the full platform |
 
+### Phase 3 integrations
+
+- **LangChain / LlamaIndex tools** – `integrations/python/minoots_agent_tools` ships a reusable client, `AtoTimerTool`,
+  and a LlamaIndex `FunctionTool` factory so agents can schedule timers directly from workflows.
+- **GitHub Action** – `github-actions/schedule-timer` lets CI pipelines create timers with regional hints and metadata.
+- **Slack bot** – `apps/slack-bot` provides a `/ato` slash command powered by the MINOOTS control plane for human-in-the-loop coordination.
+
+### Phase 4 marketing launch – "Vibe Coding"
+
+- **Go-to-market playbook** – `docs/marketing/VIBE_CODING_GO_TO_MARKET.md` packages the positioning, program calendar, and instrumentation required for launch.
+- **Asset backlog** – `docs/marketing/assets/ASSET_BACKLOG.md` enumerates the content, lifecycle, and analytics artifacts every team owes before day 0.
+- **Community operations** – `docs/marketing/community_guidelines.md` codifies Discord/Reddit moderation, cadences, and staffing so the vibe coding collective stays high-signal.
+- **Ecosystem integration** – Phase 4 messaging now threads MINOOTS alongside Parserator’s structured data layer, the Reposiologist analysis engine, and Nimbus Guardian’s deployment safety net to reinforce the Clear Seas Solutions portfolio narrative.
+
 ### Local development stack
 1. Install dependencies:
    - `cd apps/control-plane && npm install`
