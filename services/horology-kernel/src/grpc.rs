@@ -54,7 +54,8 @@ impl HorologyKernelApi for HorologyKernelService {
         let result = self
             .kernel
             .cancel(&payload.tenant_id, id, optional_string(payload.reason), optional_string(payload.requested_by))
-            .await;
+            .await
+            .map_err(map_kernel_error)?;
 
         match result {
             Some(timer) => Ok(Response::new(to_proto_timer(timer)?)),
@@ -206,6 +207,16 @@ fn to_proto_timer(timer: TimerInstance) -> Result<pb::Timer, Status> {
         action_bundle_json: serialize_json(timer.action_bundle)?,
         agent_binding_json: serialize_json(timer.agent_binding)?,
         labels: timer.labels,
+        settled_at_iso: timer
+            .settled_at
+            .map(format_datetime)
+            .unwrap_or_default(),
+        failure_reason: timer.failure_reason.unwrap_or_default(),
+        state_version: timer
+            .state_version
+            .max(0)
+            .try_into()
+            .map_err(|_| Status::internal("timer state version overflow"))?,
     })
 }
 
@@ -215,6 +226,8 @@ fn status_to_proto(status: TimerStatus) -> pb::TimerStatus {
         TimerStatus::Armed => pb::TimerStatus::Armed,
         TimerStatus::Fired => pb::TimerStatus::Fired,
         TimerStatus::Cancelled => pb::TimerStatus::Cancelled,
+        TimerStatus::Failed => pb::TimerStatus::Failed,
+        TimerStatus::Settled => pb::TimerStatus::Settled,
     }
 }
 
@@ -237,6 +250,11 @@ fn event_to_proto(event: TimerEvent) -> Result<pb::TimerEvent, Status> {
                 reason: reason.unwrap_or_default(),
             })),
         }),
+        TimerEvent::Settled(timer) => Ok(pb::TimerEvent {
+            event: Some(pb::timer_event::Event::Settled(pb::TimerSettled {
+                timer: Some(to_proto_timer(timer)?),
+            })),
+        }),
     }
 }
 
@@ -245,6 +263,7 @@ fn event_belongs_to_tenant(event: &TimerEvent, tenant_id: &str) -> bool {
         TimerEvent::Scheduled(timer) => timer.tenant_id == tenant_id,
         TimerEvent::Fired(timer) => timer.tenant_id == tenant_id,
         TimerEvent::Cancelled { timer, .. } => timer.tenant_id == tenant_id,
+        TimerEvent::Settled(timer) => timer.tenant_id == tenant_id,
     }
 }
 
@@ -252,6 +271,10 @@ fn map_kernel_error(error: KernelError) -> Status {
     match error {
         KernelError::InvalidDuration => Status::invalid_argument("duration must be greater than zero"),
         KernelError::InvalidFireTime => Status::invalid_argument("fire_at must be in the future"),
+        KernelError::NotLeader => Status::failed_precondition("kernel is not the active leader"),
+        KernelError::Persistence(inner) => {
+            Status::internal(format!("persistence error: {inner}"))
+        }
     }
 }
 
