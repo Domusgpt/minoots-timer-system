@@ -100,6 +100,57 @@
 
 ---
 
+### Entry #4: Wave 0 Platform Hardening - IN PROGRESS
+**Time:** 2025-10-15 18:00-23:30 UTC
+**Task:** Execute Wave 0 exit criteria for the async refactor charter (durable persistence, JetStream mesh, telemetry bootstrap)
+**Status:** 🔄 IN PROGRESS (Wave 0 complete, Wave 1 pending)
+
+**Actions:**
+1. Introduced Postgres-backed timer repository in the control plane with automated SQL migrations and OTEL-aware request middleware.
+2. Wired OpenTelemetry Node SDK (OTLP/HTTP) plus structured HTTP logging and graceful shutdown of the control plane service.
+3. Added repository bootstrap assets: `.env.example`, `docker-compose.dev.yml`, OTEL collector config, and `scripts/bootstrap-dev.sh` to orchestrate infra + migrations.
+4. Refactored the action orchestrator to consume JetStream durable consumers with DLQ publishing, including an `ensure-jetstream` provisioning script.
+5. Extended the Rust horology kernel with a persistence trait, Postgres adapter (SQLx), restoration path, and new tests covering restart hydration.
+6. Authored developer guide `docs/devx/LOCAL_ENVIRONMENT.md` describing Wave 0 bootstrap and verification steps.
+7. Wired the kernel binary to honor `KERNEL_STORE`/`KERNEL_DATABASE_URL` for Postgres without code changes.
+8. Delivered JetStream dead-letter replay utility (`scripts/replay-dead-letter.js`) and npm scripts for inspect/replay flows.
+9. Added repository automation: devlog enforcement script, infra smoke test script, and GitHub Actions CI workflow covering Node/Rust builds.
+
+**Telemetry / Artifacts:**
+- Postgres table `timer_records` via migration `0001_create_timer_records.sql`.
+- OTEL collector logs available through `docker logs minoots-otel-collector` after running the bootstrap script.
+- JetStream DLQ subject `MINOOTS_TIMER.dlq` seeded by `ensure-jetstream.js`.
+- DLQ replay output via `npm run dlq:inspect` targeting `MINOOTS_TIMER.dlq`.
+- CI workflow logs under GitHub Actions `CI` pipeline (devlog enforcement + smoke tests).
+
+**Next Steps:**
+- Stand up JetStream integration tests exercising DLQ replay and success-path fan-out.
+- Document telemetry expectations for multi-store kernel deployments and add alerting TODOs.
+- Begin Wave 1 workstreams (policy wall, Raft coordination, signed envelopes).
+
+---
+
+### Entry #5: Wave 1 Policy Wall Hardening - IN PROGRESS
+**Time:** 2025-10-16 02:30-04:30 UTC
+**Task:** Enforce signed kernel RPC contracts and document the control-plane mediated authentication handshake.
+**Status:** 🔄 IN PROGRESS
+
+**Actions:**
+1. ✅ Added metadata verification in the Rust gRPC service, rejecting requests without matching `x-tenant-id`, `x-principal-id`, and `x-signature` headers.
+2. ✅ Implemented constant-time signature comparison using SHA-256 and subtle equality to guard against replay/timing attacks.
+3. ✅ Added unit tests for metadata parsing, tenant scoping, and stream authorization to lock the policy behaviour.
+4. ✅ Documented the RPC signing contract in `docs/devx/LOCAL_ENVIRONMENT.md` so direct kernel clients know which headers to provide.
+
+**Telemetry / Artifacts:**
+- `services/horology-kernel/src/grpc.rs` now emits `UNAUTHENTICATED` on signature mismatches and logs warning traces for observability.
+- `cargo test --manifest-path services/horology-kernel/Cargo.toml` covers the new scope helpers and signature handling.
+
+**Next Steps:**
+- Thread tenant-aware context through the kernel event stream consumers to attach audit metadata downstream.
+- Wire the action orchestrator to verify kernel event signatures before dispatching agent actions.
+
+---
+
 ## 🔧 TECHNICAL DECISIONS
 
 ### Authentication Strategy
@@ -170,3 +221,20 @@ When picking up this work:
 
 Last updated by: Claude
 Next update due: After auth implementation complete
+### Entry #4: Async Refactor Program Kickoff - IN PROGRESS
+**Time:** 2025-10-15 23:00-23:15 UTC
+**Task:** Consolidate ultimate async refactor charter, establish devlog/testing system, and seed Day 0 devlog entry.
+**Status:** 🔄 IN PROGRESS
+
+**Actions:**
+1. Authored `docs/ASYNC_REFACTOR_PLAN.md` aligning architecture, development track, and execution program.
+2. Documented dev logging + testing governance in `docs/DEVLOG_AND_TESTING_SYSTEM.md`.
+3. Created `docs/devlog/2025-10-15.md` to start daily logging cadence with stream-specific updates and follow-ups.
+
+**Tests Performed:**
+- ⚠️ Formal test suites deferred pending upcoming persistence and telemetry changes.
+
+**Next Steps:**
+- Stand up docker-compose environment (DX-001) and capture first OTEL traces.
+- File backlog tickets (`CP-PERSIST-01`, `HK-PERSIST-01`, `EM-JETSTREAM-01`, etc.) and link them in devlog updates.
+- Draft ADR on persistence substrate selection before implementing storage adapters.

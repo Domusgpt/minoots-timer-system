@@ -2,6 +2,8 @@ import { createEventSource } from './infra/eventSource';
 import { executeActions } from './actions';
 import { logger } from './logger';
 import { TimerEvent } from './types';
+import { validateActionBundle } from './schema/registry';
+import { actionAttempts, startMetricsServer } from './metrics';
 
 const handleEvent = async (event: TimerEvent): Promise<void> => {
   switch (event.type) {
@@ -10,7 +12,12 @@ const handleEvent = async (event: TimerEvent): Promise<void> => {
       break;
     case 'fired':
       logger.info({ timerId: event.data.id }, 'Timer fired — executing actions');
+      validateActionBundle(event.data.actionBundle);
+      actionAttempts.inc({ action_kind: 'bundle', tenant_id: event.data.tenantId });
       await executeActions(event.data);
+      break;
+    case 'settled':
+      logger.info({ timerId: event.data.id }, 'Timer settled');
       break;
     case 'cancelled':
       logger.info({ timerId: event.data.timer.id, reason: event.data.reason }, 'Timer cancelled');
@@ -23,10 +30,19 @@ const handleEvent = async (event: TimerEvent): Promise<void> => {
 const bootstrap = async () => {
   const eventSource = await createEventSource();
   await eventSource.start(handleEvent);
+  const metricsPort = parseInt(process.env.METRICS_PORT ?? '9095', 10);
+  const metrics = startMetricsServer(metricsPort);
+
+  let shuttingDown = false;
 
   const shutdown = async () => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     logger.info('Shutting down action orchestrator');
     await eventSource.stop();
+    await metrics.close();
     process.exit(0);
   };
 
