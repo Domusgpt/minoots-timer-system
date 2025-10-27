@@ -5,7 +5,8 @@ import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
 import { v4 as uuid } from 'uuid';
 
-import { InMemoryTimerRepository } from '../store/inMemoryTimerRepository';
+import { TimerRepository } from '../store/timerRepository';
+import { createTimerRepository } from '../store/createTimerRepository';
 import { TimerRecord, TimerActionBundle, AgentBinding, TimerStatus } from '../types/timer';
 import { logger } from '../telemetry/logger';
 
@@ -76,7 +77,7 @@ export interface KernelGateway {
 }
 
 export class InMemoryKernelGateway implements KernelGateway {
-  constructor(private readonly repository = new InMemoryTimerRepository()) {}
+  constructor(private readonly repository: TimerRepository = createTimerRepository()) {}
 
   async schedule(command: TimerScheduleCommand): Promise<TimerRecord> {
     const timer: TimerRecord = {

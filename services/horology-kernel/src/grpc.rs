@@ -54,7 +54,8 @@ impl HorologyKernelApi for HorologyKernelService {
         let result = self
             .kernel
             .cancel(&payload.tenant_id, id, optional_string(payload.reason), optional_string(payload.requested_by))
-            .await;
+            .await
+            .map_err(map_kernel_error)?;
 
         match result {
             Some(timer) => Ok(Response::new(to_proto_timer(timer)?)),
@@ -252,6 +253,9 @@ fn map_kernel_error(error: KernelError) -> Status {
     match error {
         KernelError::InvalidDuration => Status::invalid_argument("duration must be greater than zero"),
         KernelError::InvalidFireTime => Status::invalid_argument("fire_at must be in the future"),
+        KernelError::Persistence(inner) => {
+            Status::internal(format!("persistence error: {inner}"))
+        }
     }
 }
 

@@ -3,11 +3,14 @@ import { registerTimerRoutes } from './routes/timerRoutes';
 import { TimerService } from './services/timerService';
 import { createKernelGateway } from './services/kernelGateway';
 import { logger } from './telemetry/logger';
+import { requestLogger, traceHeaderMiddleware } from './telemetry/middleware';
 
 export const createServer = (): Application => {
   const app = express();
 
+  app.use(requestLogger);
   app.use(express.json({ limit: '1mb' }));
+  app.use(traceHeaderMiddleware);
 
   const kernelGateway = createKernelGateway();
   const timerService = new TimerService(kernelGateway);
