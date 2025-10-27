@@ -10,7 +10,8 @@
     "dev": "nodemon independent-timer.js",
     "lint": "eslint .",
     "docs": "typedoc",
-    "deploy": "firebase deploy"
+    "deploy": "firebase deploy",
+    "test:phase1:failover": "TS_NODE_PROJECT=apps/control-plane/tsconfig.json node -r ./scripts/ts-node-preload.js -r ts-node/register/transpile-only tests/phase1/runKernelFailoverHarness.ts"
   },
   "keywords": [
     "timer",

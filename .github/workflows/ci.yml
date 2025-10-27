@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - work
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install control plane dependencies
+        run: npm install --no-fund --no-audit
+        working-directory: apps/control-plane
+
+      - name: Type-check control plane
+        run: npm test
+        working-directory: apps/control-plane
+
+      - name: Install action orchestrator dependencies
+        run: npm install --no-fund --no-audit
+        working-directory: services/action-orchestrator
+
+      - name: Build action orchestrator
+        run: npm run build
+        working-directory: services/action-orchestrator
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Test horology kernel
+        run: cargo test --manifest-path services/horology-kernel/Cargo.toml
+
+      - name: Enforce devlog update
+        run: node scripts/check-devlog-entry.js
+
+      - name: Infra smoke tests
+        run: bash scripts/smoke-infra.sh

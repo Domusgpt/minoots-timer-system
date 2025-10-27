@@ -1,0 +1,138 @@
+{
+  "title": "Horology Kernel Coordinator",
+  "uid": "horology-kernel-coordinator",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "editable": true,
+  "tags": ["horology", "kernel", "raft"],
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "node_id",
+        "type": "query",
+        "datasource": "Prometheus",
+        "refresh": 2,
+        "query": "label_values(kernel_coordinator_election_attempts_total, node_id)",
+        "definition": "label_values(kernel_coordinator_election_attempts_total, node_id)",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": ["$__all"]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Election Attempts",
+      "id": 1,
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "rate(kernel_coordinator_election_attempts_total{node_id=~\\\"$node_id\\\"}[5m])",
+          "legendFormat": "{{node_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "1/s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Election Results",
+      "id": 2,
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "rate(kernel_coordinator_election_results_total{node_id=~\\\"$node_id\\\"}[5m])",
+          "legendFormat": "{{node_id}} - {{result}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "1/s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Leadership Transitions",
+      "id": 3,
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "increase(kernel_coordinator_leadership_transitions_total{node_id=~\\\"$node_id\\\"}[15m])",
+          "legendFormat": "{{node_id}} -> {{state}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Heartbeat Outcomes",
+      "id": 4,
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "rate(kernel_coordinator_heartbeat_results_total{node_id=~\\\"$node_id\\\"}[5m])",
+          "legendFormat": "{{node_id}} - {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "1/s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Active Leader",
+      "id": 5,
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "topk(1, increase(kernel_coordinator_leadership_transitions_total{state=\\\"leader\\\"}[10m]))",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "{{node_id}}"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
