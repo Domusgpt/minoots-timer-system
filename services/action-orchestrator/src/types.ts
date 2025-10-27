@@ -11,7 +11,7 @@ export interface TimerInstance {
   tenantId: string;
   name: string;
   requestedBy: string;
-  status: 'scheduled' | 'armed' | 'fired' | 'cancelled' | 'failed';
+  status: 'scheduled' | 'armed' | 'fired' | 'cancelled' | 'failed' | 'settled';
   fireAt: string;
   createdAt: string;
   durationMs: number;
@@ -20,17 +20,26 @@ export interface TimerInstance {
   actionBundle?: {
     actions: TimerAction[];
     concurrency?: number;
+    retryPolicy?: {
+      maxAttempts?: number;
+      backoffInitialMs?: number;
+      backoffMultiplier?: number;
+    };
   };
   firedAt?: string;
   cancelledAt?: string;
   cancelReason?: string;
   cancelledBy?: string;
+  settledAt?: string;
+  failureReason?: string;
+  stateVersion?: number;
 }
 
 export type TimerEvent =
   | { type: 'scheduled'; data: TimerInstance }
   | { type: 'fired'; data: TimerInstance }
-  | { type: 'cancelled'; data: { timer: TimerInstance; reason?: string } };
+  | { type: 'cancelled'; data: { timer: TimerInstance; reason?: string } }
+  | { type: 'settled'; data: TimerInstance };
 
 export interface ExecutionResult {
   actionId: string;

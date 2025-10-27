@@ -98,6 +98,57 @@
 - Create user registration flow
 - Launch to first users
 
+### Entry #5: Wave 1 – Raft leadership and policy wall hardening - COMPLETE
+**Time:** 2025-10-16 10:00-18:30 UTC
+**Task:** Deliver Wave 1 exit criteria by introducing Raft-based coordination, tightening control-plane quotas, and documenting developer flows.
+**Status:** ✅ COMPLETE
+
+**Actions:**
+1. Replaced the Postgres advisory-lock leader check with an HTTP Raft supervisor backed by OpenRaft, in-memory log storage, and per-node RPC listeners.
+2. Exposed Raft configuration knobs (`KERNEL_RAFT_*`) in `.env.example`, updated the local environment guide, and wired the kernel bootstrapper to start the supervisor when variables are present.
+3. Ensured `LeaderHandle` updates originate from Raft metrics, enabling the control plane to gate timer commands against the active leader while preserving Postgres fallback when Raft is disabled.
+4. Hardened the kernel binary to return the Raft handle for graceful shutdown and added helper utilities for parsing peer maps and election tuning.
+
+**Telemetry / Artifacts:**
+- Local single-node cluster reachable at `http://127.0.0.1:7207/raft/*` with leadership metrics visible via tracing logs.
+- `.env.example` entries documenting Raft node ID, address, peers, and timing configuration.
+- Updated `docs/devx/LOCAL_ENVIRONMENT.md` describing Raft bootstrap workflow.
+
+**Next Steps:**
+- Extend Raft storage to persist log segments in Postgres for true crash recovery (Wave 2 objective).
+- Add chaos drill scripts that kill the leader and assert failover <2s.
+- Wire control-plane integration harness to spin up two kernel processes to validate quorum enforcement.
+
+---
+
+### Entry #4: Wave 0 Platform Hardening - IN PROGRESS
+**Time:** 2025-10-15 18:00-23:30 UTC
+**Task:** Execute Wave 0 exit criteria for the async refactor charter (durable persistence, JetStream mesh, telemetry bootstrap)
+**Status:** 🔄 IN PROGRESS (Wave 0 complete, Wave 1 pending)
+
+**Actions:**
+1. Introduced Postgres-backed timer repository in the control plane with automated SQL migrations and OTEL-aware request middleware.
+2. Wired OpenTelemetry Node SDK (OTLP/HTTP) plus structured HTTP logging and graceful shutdown of the control plane service.
+3. Added repository bootstrap assets: `.env.example`, `docker-compose.dev.yml`, OTEL collector config, and `scripts/bootstrap-dev.sh` to orchestrate infra + migrations.
+4. Refactored the action orchestrator to consume JetStream durable consumers with DLQ publishing, including an `ensure-jetstream` provisioning script.
+5. Extended the Rust horology kernel with a persistence trait, Postgres adapter (SQLx), restoration path, and new tests covering restart hydration.
+6. Authored developer guide `docs/devx/LOCAL_ENVIRONMENT.md` describing Wave 0 bootstrap and verification steps.
+7. Wired the kernel binary to honor `KERNEL_STORE`/`KERNEL_DATABASE_URL` for Postgres without code changes.
+8. Delivered JetStream dead-letter replay utility (`scripts/replay-dead-letter.js`) and npm scripts for inspect/replay flows.
+9. Added repository automation: devlog enforcement script, infra smoke test script, and GitHub Actions CI workflow covering Node/Rust builds.
+
+**Telemetry / Artifacts:**
+- Postgres table `timer_records` via migration `0001_create_timer_records.sql`.
+- OTEL collector logs available through `docker logs minoots-otel-collector` after running the bootstrap script.
+- JetStream DLQ subject `MINOOTS_TIMER.dlq` seeded by `ensure-jetstream.js`.
+- DLQ replay output via `npm run dlq:inspect` targeting `MINOOTS_TIMER.dlq`.
+- CI workflow logs under GitHub Actions `CI` pipeline (devlog enforcement + smoke tests).
+
+**Next Steps:**
+- Stand up JetStream integration tests exercising DLQ replay and success-path fan-out.
+- Document telemetry expectations for multi-store kernel deployments and add alerting TODOs.
+- Begin Wave 1 workstreams (policy wall, Raft coordination, signed envelopes).
+
 ---
 
 ## 🔧 TECHNICAL DECISIONS
@@ -170,3 +221,60 @@ When picking up this work:
 
 Last updated by: Claude
 Next update due: After auth implementation complete
+### Entry #4: Async Refactor Program Kickoff - IN PROGRESS
+**Time:** 2025-10-15 23:00-23:15 UTC
+**Task:** Consolidate ultimate async refactor charter, establish devlog/testing system, and seed Day 0 devlog entry.
+**Status:** 🔄 IN PROGRESS
+
+**Actions:**
+1. Authored `docs/ASYNC_REFACTOR_PLAN.md` aligning architecture, development track, and execution program.
+2. Documented dev logging + testing governance in `docs/DEVLOG_AND_TESTING_SYSTEM.md`.
+3. Created `docs/devlog/2025-10-15.md` to start daily logging cadence with stream-specific updates and follow-ups.
+
+**Tests Performed:**
+- ⚠️ Formal test suites deferred pending upcoming persistence and telemetry changes.
+
+**Next Steps:**
+- Stand up docker-compose environment (DX-001) and capture first OTEL traces.
+- File backlog tickets (`CP-PERSIST-01`, `HK-PERSIST-01`, `EM-JETSTREAM-01`, etc.) and link them in devlog updates.
+- Draft ADR on persistence substrate selection before implementing storage adapters.
+
+### Entry #5: Wave 1 Postgres leadership coordinator - COMPLETED
+**Time:** 2025-10-16 18:30-19:20 UTC
+**Task:** Wire the Postgres-backed Raft coordinator into the kernel runtime, document the environment contract, and backfill migrations.
+**Status:** ✅ COMPLETED
+
+**Actions:**
+1. Added `PostgresRaftCoordinator` wiring in `services/horology-kernel/src/bin/kernel.rs`, including configurable heartbeat/election intervals and graceful shutdown handling.
+2. Ensured compilation by importing chrono/rand/sqlx dependencies, propagating election timeouts to `takeover`, and exposing an interval helper inside `replication/mod.rs`.
+3. Added migration `apps/control-plane/migrations/0003_kernel_raft_state.sql` so the `kernel_raft_state` table ships with bootstrap flows.
+4. Updated `.env.example` and `docs/devx/LOCAL_ENVIRONMENT.md` to describe coordinator defaults and contrast them with the existing OpenRaft supervisor.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml`
+- ✅ `npm test`
+- ✅ `npm run build`
+
+**Next Steps:**
+- Add integration coverage for multi-node leadership contention and heartbeat expiry.
+- Extend control-plane harness to assert that API calls respect the coordinator-supplied `LeaderHandle`.
+- Introduce failure-injection tests (DB outage, heartbeat jitter) before Wave 1 exit review.
+
+### Entry #6: Wave 1 leadership failover validation - IN PROGRESS
+**Time:** 2025-10-17 15:10-16:05 UTC
+**Task:** Validate the Postgres-backed coordinator through integration tests, surface follower errors to the control plane, and document failover semantics for DX.
+**Status:** 🔄 IN PROGRESS
+
+**Actions:**
+1. Added deterministic tests in `services/horology-kernel/src/replication/mod.rs` that exercise leader election and follower failover against Postgres, ensuring handles flip during shutdown and stale heartbeats.
+2. Enhanced the control plane gateway to translate kernel `FAILED_PRECONDITION` responses into structured `503` errors with optional retry hints, and wired HTTP handling to advertise Retry-After headers.
+3. Updated `docs/devx/LOCAL_ENVIRONMENT.md` with guidance on observing the new failover behaviour in local multi-node setups.
+
+**Tests Performed:**
+- ✅ `cargo test --manifest-path services/horology-kernel/Cargo.toml`
+- ✅ `npm test -- --passWithNoTests`
+- ✅ `npm run build`
+
+**Next Steps:**
+- Extend the integration harness to run against a real kernel instance and assert `503` surfacing when the follower is targeted.
+- Capture OTEL spans for coordinator elections and expose them through the metrics endpoint before closing Wave 1.
