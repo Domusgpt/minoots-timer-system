@@ -170,3 +170,20 @@ When picking up this work:
 
 Last updated by: Claude
 Next update due: After auth implementation complete
+### Entry #4: Async Refactor Program Kickoff - IN PROGRESS
+**Time:** 2025-10-15 23:00-23:15 UTC
+**Task:** Consolidate ultimate async refactor charter, establish devlog/testing system, and seed Day 0 devlog entry.
+**Status:** 🔄 IN PROGRESS
+
+**Actions:**
+1. Authored `docs/ASYNC_REFACTOR_PLAN.md` aligning architecture, development track, and execution program.
+2. Documented dev logging + testing governance in `docs/DEVLOG_AND_TESTING_SYSTEM.md`.
+3. Created `docs/devlog/2025-10-15.md` to start daily logging cadence with stream-specific updates and follow-ups.
+
+**Tests Performed:**
+- ⚠️ Formal test suites deferred pending upcoming persistence and telemetry changes.
+
+**Next Steps:**
+- Stand up docker-compose environment (DX-001) and capture first OTEL traces.
+- File backlog tickets (`CP-PERSIST-01`, `HK-PERSIST-01`, `EM-JETSTREAM-01`, etc.) and link them in devlog updates.
+- Draft ADR on persistence substrate selection before implementing storage adapters.
