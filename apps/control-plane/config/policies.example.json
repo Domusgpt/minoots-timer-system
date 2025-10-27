@@ -1,0 +1,26 @@
+{
+  "signingSecret": "change-me-signing-secret",
+  "defaultQuotas": {
+    "maxActiveTimers": 1000,
+    "schedulePerMinute": 120,
+    "cancelPerMinute": 240
+  },
+  "tenants": [
+    {
+      "tenantId": "development",
+      "quotas": {
+        "maxActiveTimers": 5000,
+        "schedulePerMinute": 600
+      },
+      "apiKeys": [
+        {
+          "keyId": "dev-local",
+          "hashedSecret": "ed5a18fb8f807f996d649e379d3f35f39c543a91bdbf88c492f2ebd10d4df86c",
+          "principalId": "developer",
+          "roles": ["developer"],
+          "permissions": ["timers:create", "timers:read", "timers:cancel", "timers:stream"]
+        }
+      ]
+    }
+  ]
+}

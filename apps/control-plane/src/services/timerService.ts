@@ -1,11 +1,22 @@
+import { AuthContext } from '../types/auth';
 import { TimerCancelInput, TimerCreateInput, TimerRecord } from '../types/timer';
 import { computeFireTimestamp, parseDurationMs } from '../utils/duration';
 import { KernelGateway, TimerCancelCommand, TimerScheduleCommand } from './kernelGateway';
+import { TimerRepository } from '../store/timerRepository';
+import { PolicyEngine } from '../policy/policyEngine';
+import { QuotaExceededError } from '../policy/quotaMonitor';
 
 export class TimerService {
-  constructor(private readonly kernelGateway: KernelGateway) {}
+  constructor(
+    private readonly kernelGateway: KernelGateway,
+    private readonly repository: TimerRepository,
+    private readonly policyEngine: PolicyEngine,
+  ) {}
 
-  async createTimer(input: TimerCreateInput): Promise<TimerRecord> {
+  async createTimer(context: AuthContext, input: TimerCreateInput): Promise<TimerRecord> {
+    this.policyEngine.ensurePermission(context, 'timers:create');
+    await this.ensureActiveQuota(context);
+
     const now = new Date();
     const durationMs = input.duration
       ? parseDurationMs(input.duration)
@@ -24,18 +35,27 @@ export class TimerService {
       agentBinding: cloneNullable(input.agentBinding),
     };
 
-    return this.kernelGateway.schedule(scheduleCommand);
+    return this.kernelGateway.schedule(scheduleCommand, context);
   }
 
-  async listTimers(tenantId: string): Promise<TimerRecord[]> {
-    return this.kernelGateway.list(tenantId);
+  async listTimers(context: AuthContext, tenantId: string): Promise<TimerRecord[]> {
+    this.policyEngine.ensurePermission(context, 'timers:read');
+    return this.kernelGateway.list(tenantId, context);
   }
 
-  async getTimer(tenantId: string, id: string): Promise<TimerRecord | null> {
-    return this.kernelGateway.get(tenantId, id);
+  async getTimer(context: AuthContext, tenantId: string, id: string): Promise<TimerRecord | null> {
+    this.policyEngine.ensurePermission(context, 'timers:read');
+    return this.kernelGateway.get(tenantId, id, context);
   }
 
-  async cancelTimer(tenantId: string, id: string, payload: TimerCancelInput): Promise<TimerRecord | null> {
+  async cancelTimer(
+    context: AuthContext,
+    tenantId: string,
+    id: string,
+    payload: TimerCancelInput,
+  ): Promise<TimerRecord | null> {
+    this.policyEngine.ensurePermission(context, 'timers:cancel');
+
     const command: TimerCancelCommand = {
       tenantId,
       timerId: id,
@@ -43,7 +63,7 @@ export class TimerService {
       reason: payload.reason,
     };
 
-    return this.kernelGateway.cancel(command);
+    return this.kernelGateway.cancel(command, context);
   }
 
   private durationFromFireAt(fireAt: string, now = new Date()): number {
@@ -58,6 +78,13 @@ export class TimerService {
     }
 
     return diff;
+  }
+
+  private async ensureActiveQuota(context: AuthContext) {
+    const active = await this.repository.countActive(context.tenantId);
+    if (active >= context.quotas.maxActiveTimers) {
+      throw new QuotaExceededError('Active timer quota exceeded');
+    }
   }
 }
 

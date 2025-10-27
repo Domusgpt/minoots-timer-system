@@ -4,6 +4,13 @@ export interface TimerAction {
   id: string;
   kind: ActionKind;
   parameters: Record<string, unknown>;
+  retryPolicy?: RetryPolicy;
+}
+
+export interface RetryPolicy {
+  maxAttempts?: number;
+  backoffInitialMs?: number;
+  backoffMultiplier?: number;
 }
 
 export interface TimerInstance {
