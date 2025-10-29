@@ -8,6 +8,7 @@ import { QuotaExceededError } from '../policy/quotaManager';
 import { AuthContext } from '../policy/types';
 import { TimerService } from '../services/timerService';
 import { timerCreateSchema } from '../types/timer';
+import { readEcosystemFromMetadata } from '../types/ecosystem';
 import { logger } from '../telemetry/logger';
 
 const loaderOptions: protoLoader.Options = {
@@ -211,16 +212,18 @@ const authenticateCall = async (
 };
 
 const normalizeScheduleRequest = (request: any, tenantId: string) => {
+  const metadata = parseJson(request.metadataJson);
   const payload = {
     tenantId,
     requestedBy: request.requestedBy,
     name: request.name,
     duration: request.durationMs ?? request.duration_ms ?? request.scheduleTime?.durationMs,
     fireAt: request.fireTimeIso ?? request.fire_time_iso,
-    metadata: parseJson(request.metadataJson),
+    metadata,
     labels: request.labels ?? {},
     actionBundle: parseJson(request.actionBundleJson),
     agentBinding: parseJson(request.agentBindingJson),
+    ecosystem: readEcosystemFromMetadata(metadata),
   };
   return timerCreateSchema.parse(payload);
 };

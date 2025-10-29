@@ -23,6 +23,7 @@ const toResponse = (timer: TimerRecord) => ({
   labels: timer.labels ?? {},
   actionBundle: timer.actionBundle,
   agentBinding: timer.agentBinding,
+  ecosystem: timer.ecosystem,
   firedAt: timer.firedAt,
   cancelledAt: timer.cancelledAt,
   cancelReason: timer.cancelReason,
