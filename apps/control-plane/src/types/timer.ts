@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ecosystemSchema, EcosystemAlignment } from './ecosystem';
+
 type TimerActionShape = {
   id: string;
   kind: 'webhook' | 'command' | 'agent_prompt' | 'workflow_event';
@@ -68,6 +70,7 @@ export const timerCreateSchema = z
     labels: z.record(z.string()).optional(),
     actionBundle: timerActionBundleSchema.optional(),
     agentBinding: agentBindingSchema,
+    ecosystem: ecosystemSchema.optional(),
   })
   .refine(
     (value) => Boolean(value.duration ?? value.fireAt),
@@ -109,4 +112,5 @@ export interface TimerRecord {
   failureReason?: string;
   stateVersion?: number;
   jitterMs?: number;
+  ecosystem?: EcosystemAlignment;
 }
