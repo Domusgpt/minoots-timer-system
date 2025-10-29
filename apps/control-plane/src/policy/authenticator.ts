@@ -12,6 +12,16 @@ const hashApiKey = (apiKey: string): string => {
   return crypto.createHash('sha256').update(apiKey).digest('hex');
 };
 
+const REGION_HEADER_CANDIDATES = ['x-minoots-region', 'x-region', 'x-home-region'];
+
+const sanitizeRegionHint = (value: string | null | undefined): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
 export class Authenticator {
   constructor(private readonly headerName = 'x-api-key') {}
 
@@ -20,7 +30,11 @@ export class Authenticator {
     if (!apiKey) {
       return null;
     }
-    return this.authenticate(apiKey, req.header('x-trace-id') ?? undefined);
+    const traceId = req.header('x-trace-id') ?? undefined;
+    const regionHint = REGION_HEADER_CANDIDATES.map((header) => req.header(header))
+      .map(sanitizeRegionHint)
+      .find((value) => Boolean(value));
+    return this.authenticate(apiKey, traceId, regionHint);
   }
 
   async authenticateMetadata(metadata: Metadata): Promise<AuthContext | null> {
@@ -29,7 +43,14 @@ export class Authenticator {
       return null;
     }
     const traceId = metadata.get('x-trace-id').find((value) => typeof value === 'string');
-    return this.authenticate(apiKey, traceId as string | undefined);
+    const regionHint = REGION_HEADER_CANDIDATES.map((header) =>
+      metadata
+        .get(header)
+        .find((value) => typeof value === 'string') as string | undefined,
+    )
+      .map(sanitizeRegionHint)
+      .find((value) => Boolean(value));
+    return this.authenticate(apiKey, traceId as string | undefined, regionHint);
   }
 
   async middleware(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -47,7 +68,11 @@ export class Authenticator {
     }
   }
 
-  private async authenticate(apiKey: string, traceId?: string): Promise<AuthContext | null> {
+  private async authenticate(
+    apiKey: string,
+    traceId?: string,
+    preferredRegion?: string,
+  ): Promise<AuthContext | null> {
     const hash = hashApiKey(apiKey);
     const pool = getPostgresPool();
     const record = await findApiKeyByHash(pool, hash);
@@ -71,6 +96,7 @@ export class Authenticator {
       },
       traceId,
       apiKeyId: record.id,
+      preferredRegion: sanitizeRegionHint(preferredRegion),
     };
 
     return context;

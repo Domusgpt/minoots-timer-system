@@ -1,49 +1,57 @@
 import { Pool } from 'pg';
 
 import { TimerRecord } from '../types/timer';
+import { embedEcosystemIntoMetadata, readEcosystemFromMetadata } from '../types/ecosystem';
 import { logger } from '../telemetry/logger';
 import { TimerRepository } from './timerRepository';
 
 const TABLE = 'timer_records';
 
-const serialize = (timer: TimerRecord) => ({
-  ...timer,
-  metadata: timer.metadata ?? null,
-  labels: timer.labels ?? {},
-  actionBundle: timer.actionBundle ?? null,
-  agentBinding: timer.agentBinding ?? null,
-  firedAt: timer.firedAt ?? null,
-  cancelledAt: timer.cancelledAt ?? null,
-  cancelReason: timer.cancelReason ?? null,
-  cancelledBy: timer.cancelledBy ?? null,
-  settledAt: timer.settledAt ?? null,
-  failureReason: timer.failureReason ?? null,
-  stateVersion: timer.stateVersion ?? 0,
-  jitterMs: timer.jitterMs ?? null,
-});
+const serialize = (timer: TimerRecord) => {
+  const metadata = embedEcosystemIntoMetadata(timer.metadata, timer.ecosystem);
+  return {
+    ...timer,
+    metadata: metadata ?? null,
+    labels: timer.labels ?? {},
+    actionBundle: timer.actionBundle ?? null,
+    agentBinding: timer.agentBinding ?? null,
+    firedAt: timer.firedAt ?? null,
+    cancelledAt: timer.cancelledAt ?? null,
+    cancelReason: timer.cancelReason ?? null,
+    cancelledBy: timer.cancelledBy ?? null,
+    settledAt: timer.settledAt ?? null,
+    failureReason: timer.failureReason ?? null,
+    stateVersion: timer.stateVersion ?? 0,
+    jitterMs: timer.jitterMs ?? null,
+  };
+};
 
-const deserialize = (row: any): TimerRecord => ({
-  id: row.id,
-  tenantId: row.tenant_id,
-  requestedBy: row.requested_by,
-  name: row.name,
-  durationMs: Number(row.duration_ms),
-  createdAt: row.created_at,
-  fireAt: row.fire_at,
-  status: row.status,
-  metadata: row.metadata ?? undefined,
-  labels: row.labels ?? undefined,
-  actionBundle: row.action_bundle ?? undefined,
-  agentBinding: row.agent_binding ?? undefined,
-  firedAt: row.fired_at ?? undefined,
-  cancelledAt: row.cancelled_at ?? undefined,
-  cancelReason: row.cancel_reason ?? undefined,
-  cancelledBy: row.cancelled_by ?? undefined,
-  settledAt: row.settled_at ?? undefined,
-  failureReason: row.failure_reason ?? undefined,
-  stateVersion: row.state_version ?? undefined,
-  jitterMs: row.jitter_ms ?? undefined,
-});
+const deserialize = (row: any): TimerRecord => {
+  const metadata = (row.metadata ?? undefined) as Record<string, unknown> | undefined;
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    requestedBy: row.requested_by,
+    name: row.name,
+    durationMs: Number(row.duration_ms),
+    createdAt: row.created_at,
+    fireAt: row.fire_at,
+    status: row.status,
+    metadata,
+    labels: row.labels ?? undefined,
+    actionBundle: row.action_bundle ?? undefined,
+    agentBinding: row.agent_binding ?? undefined,
+    firedAt: row.fired_at ?? undefined,
+    cancelledAt: row.cancelled_at ?? undefined,
+    cancelReason: row.cancel_reason ?? undefined,
+    cancelledBy: row.cancelled_by ?? undefined,
+    settledAt: row.settled_at ?? undefined,
+    failureReason: row.failure_reason ?? undefined,
+    stateVersion: row.state_version ?? undefined,
+    jitterMs: row.jitter_ms ?? undefined,
+    ecosystem: readEcosystemFromMetadata(metadata),
+  };
+};
 
 export class PostgresTimerRepository implements TimerRepository {
   constructor(private readonly pool: Pool) {}

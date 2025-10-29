@@ -78,19 +78,44 @@ console.log(`${status.timeRemaining}ms remaining`);
 - Team collaboration and sharing
 - Enterprise authentication (SSO)
 
-## 🧱 Platform Foundations (Sprint 0)
+## 🧱 System architecture & services
 
-MINOOTS is evolving into the distributed horology platform described in `AGENTIC_TIMER_ARCHITECTURE.md`. This repository now
-contains runnable foundations for that architecture:
+MINOOTS follows the distributed horology blueprint outlined in `AGENTIC_TIMER_ARCHITECTURE.md`. The repository ships the following runnable services today:
 
 | Component | Path | What ships now |
 | --- | --- | --- |
-| Control Plane service | `apps/control-plane` | Express + Zod API for creating/listing/cancelling timers with multi-tenant validation |
+| Control Plane service | `apps/control-plane` | Express + Zod API for creating, listing, and cancelling timers with multi-tenant validation |
 | Horology Kernel | `services/horology-kernel` | Rust scheduler with Tokio-driven timers, broadcast event stream, and cancellation semantics |
 | Action Orchestrator | `services/action-orchestrator` | Timer event consumers that trigger webhooks and stubbed agent prompts |
 | Contracts & Dev Track | `proto/timer.proto`, `docs/DEVELOPMENT_TRACK.md` | gRPC definitions and the execution plan for landing the full platform |
 
-### Local development stack
+## ✅ What works today
+
+- **Timer lifecycle** – REST and gRPC flows create, fetch, list, and cancel timers while persisting state to Postgres for durability.
+- **Resilient scheduling** – The Rust kernel keeps time independently, exposes an event stream, and gracefully handles reconnects from the control plane.
+- **Action delivery** – The Node-based orchestrator consumes kernel events and triggers HTTP webhooks, CLI commands, or file writes defined on each timer.
+- **Agent tooling** – `integrations/python/minoots_agent_tools` includes a Python client plus LangChain and LlamaIndex helpers so agents can schedule timers programmatically.
+- **Automation hooks** – `github-actions/schedule-timer` enables CI pipelines to create timers, and the `/ato` Slack command (under `apps/slack-bot`) provides a lightweight human interface.
+- **Configuration contract** – Shared environment variables across services keep kernel locations, gateway mode, and tenant scopes in sync.
+
+## 🔭 Opportunities & next steps
+
+The core platform runs end-to-end, but several areas are ready for expansion:
+
+- **High availability** – Add leader election and hot standby support for the horology kernel to remove the current single-instance limitation.
+- **Policy enforcement** – Extend `apps/control-plane` policies beyond tenant validation to cover quota management, per-tenant rate limits, and feature gating.
+- **Action orchestration** – Graduate the orchestrator from stubbed prompts to production-grade connectors (Slack, PagerDuty, cloud functions) with retries and observability.
+- **Observability** – Ship consolidated metrics, tracing, and alerting around timer creation latency, drift, and execution failures.
+- **Ecosystem payloads** – The existing `metadata.ecosystem` structure remains optional; future work should generalise the schema so any partner integration can attach domain-specific context without bespoke code.
+
+## 🤝 Integrations & extensions
+
+- **LangChain / LlamaIndex** – `integrations/python/minoots_agent_tools` packages reusable helpers (`AtoTimerTool`, `create_minoots_tool`) to embed timers in agent workflows.
+- **GitHub Action** – `github-actions/schedule-timer` lets CI pipelines create timers with regional hints and metadata.
+- **Slack bot** – `apps/slack-bot` offers a `/ato` slash command powered by the control plane for fast collaboration.
+- **Marketing playbooks** – The Phase 4 assets under `docs/marketing/` remain available for teams coordinating community and launch efforts.
+
+## 🧑‍💻 Local development stack
 1. Install dependencies:
    - `cd apps/control-plane && npm install`
    - `cd services/action-orchestrator && npm install`
@@ -108,7 +133,7 @@ contains runnable foundations for that architecture:
 4. Use the existing CLI (`independent-timer.js`) or HTTP calls to interact with the control plane and watch timers propagate
    through the kernel and orchestrator.
 
-See [`docs/DEVELOPMENT_TRACK.md`](docs/DEVELOPMENT_TRACK.md) for the detailed engineering track and next milestones.
+See [`docs/DEVELOPMENT_TRACK.md`](docs/DEVELOPMENT_TRACK.md) for the detailed engineering track and next milestones. Deployment and troubleshooting guidance lives in [`docs/devx/DEPLOYMENT_AND_TROUBLESHOOTING.md`](docs/devx/DEPLOYMENT_AND_TROUBLESHOOTING.md).
 
 ### Service configuration contract
 
@@ -117,12 +142,15 @@ See [`docs/DEVELOPMENT_TRACK.md`](docs/DEVELOPMENT_TRACK.md) for the detailed en
 | `KERNEL_GRPC_ADDR` | `0.0.0.0:50051` | Horology kernel | Binds the scheduler's gRPC listener (also read as `KERNEL_GRPC_URL` for backwards compatibility). |
 | `KERNEL_GRPC_URL` | `localhost:50051` | Control plane, Action orchestrator | Location of the kernel when acting as a client. |
 | `KERNEL_GATEWAY_MODE` | `grpc` | Control plane | Switches between the real kernel and the in-memory fallback (`memory`). |
-| `KERNEL_EVENT_TENANT_ID` | `__all__` | Action orchestrator | Restricts the gRPC event stream to a single tenant when desired. |
+| `KERNEL_EVENT_TENANT_ID` | `__all__` | Action orchestrator | Restricts the gRPC event stream to a single tenant when desired.|
 
 All gRPC schedule/list/get/cancel calls now pass metadata, labels, action bundles, and agent bindings as canonical JSON strings.
 Clients are responsible for serializing structured payloads before sending requests and for parsing JSON when receiving timers
 or stream events.
 
+### Optional ecosystem metadata
+
+Timers may include an `ecosystem` payload when teams need to align MINOOTS with neighbouring products (Parserator, Reposiologist, Nimbus Guardian, or Clear Seas engagements). The control plane persists the payload under `metadata.ecosystem` and projects curated labels for dashboards and search. The canonical field reference lives in [`docs/integrations/ECOSYSTEM_METADATA.md`](docs/integrations/ECOSYSTEM_METADATA.md). The schema is intentionally permissive—supplying a shared narrative or sync timestamp is enough when fuller integrations are not required.
 ## 📖 Documentation
 
 ### Basic Usage
